@@ -55,7 +55,8 @@ def ps1_symbols(obj):
     for line in sh(READELF, '-sW', str(obj)).splitlines():
         p = line.split()
         if len(p) >= 8 and p[6].isdigit():
-            syms.append({'value': int(p[1], 16), 'type': p[3], 'bind': p[4], 'shndx': int(p[6]), 'name': p[7]})
+            syms.append({'value': int(p[1], 16), 'size': int(p[2], 0) if p[2].isdigit() else int(p[2], 16),
+                         'type': p[3], 'bind': p[4], 'shndx': int(p[6]), 'name': p[7]})
     return syms
 
 
@@ -95,6 +96,7 @@ def main():
 
     main_ft = json.load(open('build/pc-tables/func_table_all.json'))
     main_funcs = {e['name'] for e in main_ft['entries']}
+    main_by_addr = {e['addr']: e['name'] for e in main_ft['entries']}
     main_abs = json.load(open('build/pc-tables/pe_abs_syms.json'))
 
     overlays = []
@@ -141,12 +143,16 @@ def main():
                         continue
                     a = base[s['shndx']] + s['value']
                     if kind == 'c' and s['type'] == 'FUNC':
-                        funcs.append({'name': s['name'], 'addr': a, 'bind': s['bind'], 'src': src})
+                        funcs.append({'name': s['name'], 'addr': a, 'bind': s['bind'], 'src': src,
+                                      'file_off': a - vram + fs, 'size': s['size']})
                     elif kind != 'c' and s['type'] in ('OBJECT', 'NOTYPE') and s['bind'] == 'GLOBAL':
                         cdata[s['name']] = a
                 if kind == 'c':
                     units.append(src)
         size = max(ends) if ends else 0
+        # Fragmented overlays: segments linked at unrelated addresses (pieces
+        # the game loads or copies separately, e.g. menu_memcard, boot_display).
+        fragmented = len({s.get('vram', 0) - s.get('start', 0) for s in segs}) > 1
         symtxt = read_sym_txt(pathlib.Path('configs/USA/overlays/sym.%s.txt' % name))
         mism = []
         for f in funcs:
@@ -154,7 +160,7 @@ def main():
                 mism.append('%s computed 0x%08X, sym.txt 0x%08X' % (f['name'], f['addr'], symtxt[f['name']][0]))
         m = re.search(r'extract locally with: dd if=\S*PE\.IMG \S+ bs=(\d+) skip=(\d+) count=(\d+)', cfgp.read_text())
         img_off = int(m.group(1)) * int(m.group(2)) if m else -1
-        ov = {'name': name, 'sha1': cfg.get('sha1'), 'img_off': img_off, 'vram': segs[0]['vram'] if segs else 0,
+        ov = {'name': name, 'sha1': cfg.get('sha1'), 'img_off': img_off, 'fragmented': fragmented, 'vram': segs[0]['vram'] if segs else 0,
               'size': size, 'units': sorted(set(units)), 'funcs': funcs, 'cdata': cdata,
               'symtxt': {k: v[0] for k, v in symtxt.items()}, 'problems': problems, 'mismatch': mism}
         overlays.append(ov)
@@ -221,6 +227,14 @@ def main():
             if s in main_funcs or s in main_abs or s.startswith('pe_abs_'):
                 global_refs.add(s)
                 continue
+            mf = re.fullmatch(r'func_([0-9A-Fa-f]{8})', s)
+            if mf and int(mf.group(1), 16) in main_by_addr:
+                # Address-named call into the executable (e.g. func_800719F4 =
+                # strcat): bind to the function itself.
+                target = main_by_addr[int(mf.group(1), 16)]
+                rename[s] = target
+                global_refs.add(target)
+                continue
             a = ov['symtxt'].get(s)
             if a is None:
                 m = re.fullmatch(r'(?:D|jtbl|g|B|func)_([0-9A-Fa-f]{8})', s)
@@ -244,7 +258,7 @@ def main():
         (out / ('rename_%s.txt' % n)).write_text(''.join('%s%s %s%s\n' % (PREFIX, k, PREFIX, v) for k, v in sorted(rename.items())))
         (out / ('objs_%s.txt' % n)).write_text('\n'.join(objs) + '\n')
         host_defined = {k for k, t in defined.items() if t in 'TW'}
-        gl = sorted((f['addr'], tag + f['name']) for f in ov['funcs']
+        gl = sorted((f['addr'], tag + f['name'], f['file_off'], f['size']) for f in ov['funcs']
                     if f['bind'] == 'GLOBAL' and f['name'] in host_defined)
         no_host = sorted(f['name'] for f in ov['funcs'] if f['bind'] == 'GLOBAL' and f['name'] not in host_defined)
         if no_host:
@@ -253,20 +267,24 @@ def main():
         table_rows.append((ov, gl))
 
     for ov, gl in table_rows:
-        for _, hn in gl:
+        for _, hn, _, _ in gl:
             table_c.append('extern void %s(void);' % hn)
     for ov, gl in table_rows:
         if gl:
             table_c.append('static const PeHostFunc ovl_funcs_%s[] = {' % safe(ov['name']))
-            table_c += ['    {0x%08Xu, (void *)%s},' % (a, hn) for a, hn in gl]
+            table_c += ['    {0x%08Xu, (void *)%s},' % (a, hn) for a, hn, _, _ in gl]
+            table_c.append('};')
+            table_c.append('static const PeHostOverlayFunc ovl_meta_%s[] = {' % safe(ov['name']))
+            table_c += ['    {0x%Xu, 0x%Xu},' % (fo, sz) for _, _, fo, sz in gl]
             table_c.append('};')
     table_c.append('const PeHostOverlay pe_overlay_table[] = {')
     for ov, gl in table_rows:
         sha = ov['sha1'] or '0' * 40
-        table_c.append('    {"%s", 0x%08Xu, 0x%Xu, %d, {%s}, %s, %d},' % (
+        table_c.append('    {"%s", 0x%08Xu, 0x%Xu, %d, {%s}, %s, %s, %d, %d},' % (
             ov['name'], ov['vram'], ov['size'], ov['img_off'],
             ', '.join('0x%s' % sha[i:i + 2] for i in range(0, 40, 2)),
-            ('ovl_funcs_%s' % safe(ov['name'])) if gl else '0', len(gl)))
+            ('ovl_funcs_%s' % safe(ov['name'])) if gl else '0',
+            ('ovl_meta_%s' % safe(ov['name'])) if gl else '0', len(gl), 1 if ov['fragmented'] else 0))
     table_c.append('};')
     table_c.append('const unsigned int pe_overlay_count = %d;' % len(table_rows))
     (out / 'overlay_global_refs.txt').write_text(''.join(x + '\n' for x in sorted(global_refs)))

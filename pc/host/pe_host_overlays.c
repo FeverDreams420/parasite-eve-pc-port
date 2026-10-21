@@ -23,6 +23,7 @@ void pe_host_sha1(const void *data, unsigned int len, unsigned char out[20]);
 typedef struct {
     int verified;
     unsigned char fp[FP_LEN];
+    unsigned char *image; /* fragmented overlays: the verified binary */
 } OverlayState;
 
 static OverlayState *g_state;
@@ -71,6 +72,10 @@ void pe_host_overlays_init(void) {
         if (memcmp(h, o->sha1, 20) == 0) {
             g_state[i].verified = 1;
             memcpy(g_state[i].fp, buf + (o->pe_img_offset % 2048), FP_LEN);
+            if (o->fragmented) {
+                g_state[i].image = (unsigned char *)malloc(o->size);
+                memcpy(g_state[i].image, buf + (o->pe_img_offset % 2048), o->size);
+            }
             ok++;
         } else {
             bad++;
@@ -105,6 +110,26 @@ void pe_host_overlays_note_write(unsigned int addr, unsigned int len) {
         const PeHostOverlay *o = &pe_overlay_table[i];
         unsigned char h[20];
         if (!g_state[i].verified || !o->func_count) {
+            continue;
+        }
+        if (o->fragmented) {
+            /* Pieces of this overlay are loaded or copied separately to
+             * unrelated addresses: recognise each function by its own bytes. */
+            unsigned int k, n = 0;
+            for (k = 0; k < o->func_count; k++) {
+                unsigned int fa = o->funcs[k].mips_addr, sz = o->meta[k].size;
+                if (fa + sz <= addr || fa >= end || sz < 5) {
+                    continue;
+                }
+                if (memcmp((const void *)(uintptr_t)fa, g_state[i].image + o->meta[k].file_off, sz) == 0) {
+                    pe_host_write_jump(fa, o->funcs[k].host);
+                    n++;
+                }
+            }
+            if (n && getenv("PE_LOG_OVERLAYS")) {
+                fprintf(stderr, "pe: %u functions of %s recognised at 0x%08X..0x%08X\n", n, o->name,
+                        addr, end);
+            }
             continue;
         }
         if (end <= o->vram || addr >= o->vram + o->size) {

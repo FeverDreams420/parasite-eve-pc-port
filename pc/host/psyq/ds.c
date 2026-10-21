@@ -98,6 +98,10 @@ static int next_id(void) {
 int pe_psyq_DsRead(DslLOC *pos, int sectors, void *buf, int mode) {
     int lba = pos ? pe_psyq_DsPosToInt(pos) : g_last_lba;
     (void)mode; /* the game reads 2048-byte data sectors (mode | 0x20) */
+    if (getenv("PE_LOG_CD")) {
+        fprintf(stderr, "pe: DsRead sector %d x%d -> 0x%08X (mode 0x%X)\n", lba, sectors,
+                (unsigned int)(uintptr_t)buf, mode);
+    }
     if (sectors <= 0) {
         return 0;
     }

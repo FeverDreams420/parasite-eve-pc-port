@@ -54,3 +54,6 @@ void pe_psyq_StUnSetRing(void) { StUnSetRing(); }
  * host has no BIOS and its interrupt model never touches GTE state, so there
  * is nothing to patch. */
 void pe_psyq__patch_gte(void) {}
+
+/* More BIOS string functions used by overlays. */
+char *pe_psyq_strcat(char *d, const char *s) { return strcat(d, s); }

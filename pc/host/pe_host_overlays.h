@@ -4,13 +4,20 @@
 #include "pe_host_func_table.h"
 
 typedef struct {
+    unsigned int file_off; /* offset of the function in the overlay binary */
+    unsigned int size;     /* bytes */
+} PeHostOverlayFunc;
+
+typedef struct {
     const char *name;
     unsigned int vram;      /* load address */
     unsigned int size;      /* bytes */
     int pe_img_offset;      /* byte offset inside Disc 1 PE.IMG, -1 if unknown */
     unsigned char sha1[20]; /* of the retail overlay binary */
     const PeHostFunc *funcs;
+    const PeHostOverlayFunc *meta; /* parallel to funcs */
     unsigned int func_count;
+    int fragmented; /* pieces linked at unrelated addresses */
 } PeHostOverlay;
 
 extern const PeHostOverlay pe_overlay_table[];
