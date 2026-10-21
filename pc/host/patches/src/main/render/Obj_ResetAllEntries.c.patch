@@ -1,0 +1,9 @@
+--- a/src/main/render/Obj_ResetAllEntries.c
++++ b/src/main/render/Obj_ResetAllEntries.c
+@@ -1,6 +1,5 @@
+ #include "pe1/geom_state.h"
+ 
+-extern GeomState * D_800B1624 __asm__("D_800B1624");
+ 
+ int Obj_ResetAllEntries(void) __asm__("func_800655D4");
+ 
