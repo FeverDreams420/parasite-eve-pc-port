@@ -1,0 +1,11 @@
+work/
+build/
+*.bin
+*.cue
+*.iso
+*.img
+*.mcd
+*.mcr
+*.ppm
+SLUS_*
+main.exe
