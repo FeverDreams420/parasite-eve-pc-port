@@ -110,7 +110,7 @@ int pe_psyq_DsRead(DslLOC *pos, int sectors, void *buf, int mode) {
         return 0;
     }
     g_last_lba = lba + sectors;
-    pe_host_overlays_note_write((unsigned int)(uintptr_t)buf, (unsigned int)sectors * 2048u);
+    pe_host_overlays_note_read((unsigned int)(uintptr_t)buf, (unsigned int)sectors * 2048u, lba);
     return next_id();
 }
 

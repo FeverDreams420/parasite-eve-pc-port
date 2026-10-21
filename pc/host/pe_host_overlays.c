@@ -12,6 +12,7 @@
 #include "pe_host_disc.h"
 #include "pe_host_mem.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +28,7 @@ typedef struct {
 } OverlayState;
 
 static OverlayState *g_state;
+static unsigned int g_pe_img_lba, g_pe_img_size; /* where PE.IMG is on the disc */
 static int g_current[8]; /* last installed overlay index per window, -1 none */
 static unsigned int g_window_vram[8];
 static int g_windows;
@@ -53,6 +55,8 @@ void pe_host_overlays_init(void) {
         fprintf(stderr, "pe: PE.IMG not found; overlays will not be recognised\n");
         return;
     }
+    g_pe_img_lba = lba;
+    g_pe_img_size = size;
     for (i = 0; i < pe_overlay_count; i++) {
         const PeHostOverlay *o = &pe_overlay_table[i];
         unsigned int first, last, n;
@@ -102,7 +106,16 @@ static void install(unsigned int i) {
 }
 
 void pe_host_overlays_note_write(unsigned int addr, unsigned int len) {
+    pe_host_overlays_note_read(addr, len, -1);
+}
+
+void pe_host_overlays_note_read(unsigned int addr, unsigned int len, int disc_lba) {
     unsigned int i, end = addr + len;
+    long long src_off = -1; /* byte offset in PE.IMG the data came from */
+    if (disc_lba >= 0 && g_pe_img_size && (unsigned int)disc_lba >= g_pe_img_lba &&
+        (unsigned long long)((unsigned int)disc_lba - g_pe_img_lba) * 2048u < g_pe_img_size) {
+        src_off = (long long)((unsigned int)disc_lba - g_pe_img_lba) * 2048;
+    }
     if (!g_state) {
         return;
     }
@@ -115,13 +128,36 @@ void pe_host_overlays_note_write(unsigned int addr, unsigned int len) {
         if (o->fragmented) {
             /* Pieces of this overlay are loaded or copied separately to
              * unrelated addresses: recognise each function by its own bytes. */
+            /* Their link addresses do not always match where the game puts
+             * them (menu_memcard's fade handler is linked at 0x80192F9C but
+             * the game's own read puts it at 0x80192FE8). When the read came
+             * from PE.IMG, the disc position says exactly which bytes of the
+             * overlay landed where; a function is switched in at that address
+             * when its bytes there are the verified ones. Otherwise only the
+             * link address is checked. */
             unsigned int k, n = 0;
             for (k = 0; k < o->func_count; k++) {
                 unsigned int fa = o->funcs[k].mips_addr, sz = o->meta[k].size;
-                if (fa + sz <= addr || fa >= end || sz < 5) {
+                const unsigned char *want = g_state[i].image + o->meta[k].file_off;
+                if (sz < 5 || o->meta[k].file_off + sz > o->size) {
                     continue;
                 }
-                if (memcmp((const void *)(uintptr_t)fa, g_state[i].image + o->meta[k].file_off, sz) == 0) {
+                if (src_off >= 0) {
+                    long long at = (long long)o->pe_img_offset + o->meta[k].file_off - src_off;
+                    if (at >= 0 && at + sz <= len) {
+                        unsigned int ra = addr + (unsigned int)at;
+                        if (memcmp((const void *)(uintptr_t)ra, want, sz) == 0) {
+                            pe_host_write_jump(ra, o->funcs[k].host);
+                            n++;
+                            if (ra != fa && getenv("PE_LOG_OVERLAYS")) {
+                                fprintf(stderr, "pe: %s function linked at 0x%08X loaded at 0x%08X\n",
+                                        o->name, fa, ra);
+                            }
+                        }
+                        continue;
+                    }
+                }
+                if (fa >= addr && fa + sz <= end && memcmp((const void *)(uintptr_t)fa, want, sz) == 0) {
                     pe_host_write_jump(fa, o->funcs[k].host);
                     n++;
                 }

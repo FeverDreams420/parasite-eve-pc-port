@@ -29,5 +29,7 @@ void pe_host_overlays_init(void);
 /* The game wrote [addr, addr+len) (a CD read): install any overlay that is
  * now complete in RAM. */
 void pe_host_overlays_note_write(unsigned int addr, unsigned int len);
+/* The same for a CD read of `len` bytes from disc sector `disc_lba`. */
+void pe_host_overlays_note_read(unsigned int addr, unsigned int len, int disc_lba);
 
 #endif

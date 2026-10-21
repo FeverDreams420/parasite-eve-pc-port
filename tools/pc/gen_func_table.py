@@ -76,6 +76,8 @@ def main():
     subalign = seg.get('subalign', cfg['options'].get('subalign', 4))
     entries = []
     missing = []
+    missing_ranges = []
+    unit_starts = []
     mismatched = []
     for sub in seg['subsegments']:
         if isinstance(sub, dict):
@@ -84,6 +86,8 @@ def main():
             if len(sub) < 3:
                 continue
             off, kind, name = sub[0], sub[1], sub[2]
+        if off is not None:
+            unit_starts.append(off)
         if kind != 'c':
             continue
         if exclude and name.startswith(exclude):
@@ -91,6 +95,7 @@ def main():
         obj = pathlib.Path('build/USA/src/main/%s.c.o' % name)
         if not obj.exists():
             missing.append(name)
+            missing_ranges.append((name, vram + (off - file_start)))
             continue
         secs = sections(obj)
         texts = [s for s in secs if s['name'].startswith('.text') and 'X' in s['flags']]
@@ -121,6 +126,21 @@ def main():
             if f['shndx'] in base:
                 entries.append({'addr': base[f['shndx']] + f['value'], 'name': f['name'],
                                 'unit': name, 'size': f['size'], 'bind': f['bind']})
+    # Units whose PS1 object could not be built here (they need GAS 2.7/2.8.1):
+    # take their functions from configs/USA/sym.main.txt ("type:func"), within
+    # the unit's range in main.yaml. Their code is not checked against retail.
+    starts = sorted({vram + (s0 - file_start) for s0 in unit_starts})
+    symtxt = {}
+    for m in re.finditer(r'^\s*(\w+)\s*=\s*(0x[0-9A-Fa-f]+)\s*;.*type:func', pathlib.Path('configs/USA/sym.main.txt').read_text(), re.M):
+        symtxt[int(m.group(2), 16)] = m.group(1)
+    known = {e['addr'] for e in entries}
+    for name, a0 in missing_ranges:
+        nxt = [x for x in starts if x > a0]
+        a1 = nxt[0] if nxt else a0 + 0x10000
+        for a, fn in sorted(symtxt.items()):
+            if a0 <= a < a1 and a not in known:
+                entries.append({'addr': a, 'name': fn, 'unit': name, 'size': 0, 'bind': 'GLOBAL',
+                                'from_sym_txt': True})
     entries.sort(key=lambda e: e['addr'])
     dup = {}
     for e in entries:
