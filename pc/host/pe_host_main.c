@@ -24,6 +24,21 @@
 
 void pe_game_main(void); /* the game's main(), renamed at link time */
 void pe_host_sha1(const void *data, unsigned int len, unsigned char out[20]);
+int pe_host_lowmem_emulate(const unsigned char *ip, unsigned int addr, unsigned int *r[8]);
+
+/* Is `eip` inside this program's own code (where the game's code is)? */
+#ifdef _WIN32
+static int in_own_code(unsigned int eip) {
+    const unsigned char *base = (const unsigned char *)GetModuleHandleA(NULL);
+    const IMAGE_NT_HEADERS *nt = (const IMAGE_NT_HEADERS *)(base + ((const IMAGE_DOS_HEADER *)base)->e_lfanew);
+    return eip >= (unsigned int)(uintptr_t)base && eip < (unsigned int)(uintptr_t)base + nt->OptionalHeader.SizeOfImage;
+}
+#else
+extern char __executable_start[], etext[];
+static int in_own_code(unsigned int eip) {
+    return eip >= (unsigned int)(uintptr_t)__executable_start && eip < (unsigned int)(uintptr_t)etext;
+}
+#endif
 
 /* SHA-1 of SLUS_006.62 (configs/USA/main.yaml); every function address in
  * the build was checked against this file. */
@@ -79,6 +94,19 @@ static void on_fault(int sig, siginfo_t *si, void *ctx) {
     ucontext_t *uc = (ucontext_t *)ctx;
     unsigned int eip = (unsigned int)uc->uc_mcontext.gregs[REG_EIP];
     unsigned int esp = (unsigned int)uc->uc_mcontext.gregs[REG_ESP];
+    if (sig == SIGSEGV && (uintptr_t)si->si_addr < 0x10000u && in_own_code(eip)) {
+        greg_t *g = uc->uc_mcontext.gregs;
+        unsigned int *r[8] = {(unsigned int *)&g[REG_EAX], (unsigned int *)&g[REG_ECX],
+                              (unsigned int *)&g[REG_EDX], (unsigned int *)&g[REG_EBX],
+                              (unsigned int *)&g[REG_ESP], (unsigned int *)&g[REG_EBP],
+                              (unsigned int *)&g[REG_ESI], (unsigned int *)&g[REG_EDI]};
+        int len = pe_host_lowmem_emulate((const unsigned char *)(uintptr_t)eip,
+                                         (unsigned int)(uintptr_t)si->si_addr, r);
+        if (len > 0) {
+            g[REG_EIP] = (greg_t)(eip + (unsigned int)len);
+            return;
+        }
+    }
     if (sig == SIGTRAP) {
         const char *n = trap_name(eip - 1);
         fprintf(stderr, "pe: call into PSY-Q code with no host version: %s at 0x%08X "
@@ -103,6 +131,20 @@ static LONG CALLBACK on_exception(EXCEPTION_POINTERS *ep) {
         fprintf(stderr, "pe: call into PSY-Q code with no host version: %s at 0x%08X "
                         "(return address 0x%08X)\n", n ? n : "?", eip,
                 *(unsigned int *)(uintptr_t)ep->ContextRecord->Esp);
+    } else if (code == EXCEPTION_ACCESS_VIOLATION && ep->ExceptionRecord->ExceptionInformation[1] < 0x10000u &&
+               in_own_code(eip)) {
+        CONTEXT *c = ep->ContextRecord;
+        unsigned int *r[8] = {(unsigned int *)&c->Eax, (unsigned int *)&c->Ecx, (unsigned int *)&c->Edx,
+                              (unsigned int *)&c->Ebx, (unsigned int *)&c->Esp, (unsigned int *)&c->Ebp,
+                              (unsigned int *)&c->Esi, (unsigned int *)&c->Edi};
+        int len = pe_host_lowmem_emulate((const unsigned char *)(uintptr_t)eip,
+                                         (unsigned int)ep->ExceptionRecord->ExceptionInformation[1], r);
+        if (len > 0) {
+            c->Eip = eip + (unsigned int)len;
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+        fprintf(stderr, "pe: exception 0x%08lX at eip=0x%08X, address 0x%08lX\n", (unsigned long)code, eip,
+                (unsigned long)ep->ExceptionRecord->ExceptionInformation[1]);
     } else if (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_ILLEGAL_INSTRUCTION ||
                code == EXCEPTION_PRIV_INSTRUCTION) {
         fprintf(stderr, "pe: exception 0x%08lX at eip=0x%08X, address 0x%08lX\n",

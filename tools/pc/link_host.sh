@@ -91,7 +91,7 @@ done
 python3 tools/pc/gen_data_code.py assets/USA/main.exe "$OUT/data_code.c" >/dev/null
 "$CC" $CFLAGS -Ipc/host -include pc/host/pe_host_prelude.h -c "$OUT/data_code.c" -o "$OUT/rt/data_code.o"
 
-for f in pc/host/pe_host_mem.c pc/host/pe_host_main.c pc/host/pe_host_disc.c pc/host/pe_host_sha1.c pc/host/pe_host_gte.c pc/host/pe_host_overlays.c "$OUT/ovl/overlay_table.c" "$OUT/func_table.c" "$OUT/psyq_traps.c" "$OUT/psyq_stubs.c"; do
+for f in pc/host/pe_host_mem.c pc/host/pe_host_main.c pc/host/pe_host_disc.c pc/host/pe_host_sha1.c pc/host/pe_host_gte.c pc/host/pe_host_overlays.c pc/host/pe_host_lowmem.c "$OUT/ovl/overlay_table.c" "$OUT/func_table.c" "$OUT/psyq_traps.c" "$OUT/psyq_stubs.c"; do
     "$CC" $CFLAGS -Ipc/host -c "$f" -o "$OUT/rt/$(basename "$f" .c).o"
 done
 

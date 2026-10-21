@@ -10,6 +10,8 @@
 #include <libgpu.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 void Psyz_GpuWriteGP0(unsigned int word);
 int Psyz_GpuExeque(void);
@@ -19,11 +21,67 @@ int Psyz_GpuExeque(void);
 
 static int g_queued;
 
+/* Debug: PE_LOG_GPU=first:last logs, for those frame numbers, how many
+ * packets of each GP0 command (first data word >> 24) were sent. */
+unsigned int pe_host_frame_number(void);
+static unsigned int g_hist[256], g_hist_frame = ~0u;
+static int gpu_log_on(void) {
+    static int init, first = -1, last = -1;
+    unsigned int f;
+    if (!init) {
+        const char *e = getenv("PE_LOG_GPU");
+        init = 1;
+        if (e) {
+            first = atoi(e);
+            last = strchr(e, ':') ? atoi(strchr(e, ':') + 1) : first;
+        }
+    }
+    if (first < 0) {
+        return 0;
+    }
+    f = pe_host_frame_number();
+    return (int)f >= first && (int)f <= last;
+}
+static void gpu_log_flush_frame(void) {
+    unsigned int f = pe_host_frame_number(), i;
+    if (f == g_hist_frame) {
+        return;
+    }
+    if (g_hist_frame != ~0u) {
+        fprintf(stderr, "pe: gpu frame %u:", g_hist_frame);
+        for (i = 0; i < 256; i++) {
+            if (g_hist[i]) {
+                fprintf(stderr, " %02X:%u", i, g_hist[i]);
+            }
+        }
+        fprintf(stderr, "\n");
+    }
+    memset(g_hist, 0, sizeof(g_hist));
+    g_hist_frame = f;
+}
+void pe_host_gpu_log_note(const char *what, int a, int b, int c, int d) {
+    if (gpu_log_on()) {
+        fprintf(stderr, "pe: gpu frame %u: %s %d,%d %d,%d\n", pe_host_frame_number(), what, a, b, c, d);
+    }
+}
+
 static void push_packet(const uint32_t *p) {
     uint32_t len = p[0] >> 24;
     uint32_t i;
     if (len == 0) {
         return;
+    }
+    if (gpu_log_on()) {
+        gpu_log_flush_frame();
+        g_hist[p[1] >> 24]++;
+        if (getenv("PE_DUMP_GPU")) {
+            uint32_t k;
+            fprintf(stderr, "pe: gp0");
+            for (k = 1; k <= len; k++) {
+                fprintf(stderr, " %08X", p[k]);
+            }
+            fprintf(stderr, "\n");
+        }
     }
     if (g_queued + (int)len > QUEUE_ROOM) {
         Psyz_GpuExeque();

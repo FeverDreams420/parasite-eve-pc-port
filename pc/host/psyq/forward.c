@@ -62,10 +62,16 @@ long pe_psyq_StopRCnt(long spec) { return StopRCnt(spec); }
 unsigned char *Psyz_VideoAllocCapturedFrame(int *w, int *h);
 unsigned char *Psyz_VideoAllocVramDump(int *w, int *h);
 static unsigned int g_frames;
+unsigned int pe_host_frame_number(void) { return g_frames; }
+void pe_host_gpu_log_note(const char *what, int a, int b, int c, int d);
 
 static void write_ppm(const char *path, const unsigned char *rgb, int w, int h) {
+    static int reported;
     FILE *f = fopen(path, "wb");
     if (!f) {
+        if (!reported++) {
+            fprintf(stderr, "pe: capture: cannot create %s\n", path);
+        }
         return;
     }
     fprintf(f, "P6\n%d %d\n255\n", w, h);
@@ -86,6 +92,10 @@ static void debug_frame(void) {
         char path[512];
         int w, h;
         unsigned char *rgb = Psyz_VideoAllocCapturedFrame(&w, &h);
+        static int reported;
+        if (!rgb && !reported++) {
+            fprintf(stderr, "pe: capture: reading the screen back from the GPU failed (frame %u)\n", g_frames);
+        }
         if (rgb) {
             snprintf(path, sizeof(path), "%s/frame_%05u.ppm", dir, g_frames);
             write_ppm(path, rgb, w, h);
@@ -130,10 +140,23 @@ int pe_psyq_ResetCallback(void) { return ResetCallback(); }
 int pe_psyq_ResetGraph(int mode) { return ResetGraph(mode); }
 int pe_psyq_SetGraphDebug(int level) { return SetGraphDebug(level); }
 void pe_psyq_SetDispMask(int mask) { SetDispMask(mask); }
-int pe_psyq_ClearImage(RECT *r, u_char cr, u_char cg, u_char cb) { return ClearImage(r, cr, cg, cb); }
-int pe_psyq_LoadImage(RECT *r, u_long *p) { return LoadImage(r, p); }
-int pe_psyq_StoreImage(RECT *r, u_long *p) { return StoreImage(r, p); }
-int pe_psyq_MoveImage(RECT *r, int x, int y) { return MoveImage(r, x, y); }
+int pe_psyq_ClearImage(RECT *r, u_char cr, u_char cg, u_char cb) {
+    pe_host_gpu_log_note("ClearImage", r->x, r->y, r->w, r->h);
+    return ClearImage(r, cr, cg, cb);
+}
+int pe_psyq_LoadImage(RECT *r, u_long *p) {
+    pe_host_gpu_log_note("LoadImage", r->x, r->y, r->w, r->h);
+    return LoadImage(r, p);
+}
+int pe_psyq_StoreImage(RECT *r, u_long *p) {
+    pe_host_gpu_log_note("StoreImage", r->x, r->y, r->w, r->h);
+    return StoreImage(r, p);
+}
+int pe_psyq_MoveImage(RECT *r, int x, int y) {
+    pe_host_gpu_log_note("MoveImage", r->x, r->y, r->w, r->h);
+    pe_host_gpu_log_note("MoveImage to", x, y, 0, 0);
+    return MoveImage(r, x, y);
+}
 int pe_psyq_DrawSync(int mode) { return DrawSync(mode); }
 DISPENV *pe_psyq_PutDispEnv(DISPENV *env) { return PutDispEnv(env); }
 
