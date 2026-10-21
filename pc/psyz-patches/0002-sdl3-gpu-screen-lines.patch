@@ -1,0 +1,91 @@
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index 14d2b66..8ab0d97 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -83,6 +83,29 @@ static bool disp_rgb24 = false;
+ static SDL_GPUTexture* disp24_tex = NULL;
+ static unsigned char* disp24_rgb = NULL;
+ static Posi display_size = {256, 240};
++// Lines of the 240-line (NTSC) screen that show the display area, from
++// DISPENV.screen: the picture starts screen_top lines down and is
++// screen_lines tall (0 = the whole screen); the rest is black, as on a TV.
++static int screen_top = 0;
++static int screen_lines = 0;
++void Psyz_VideoSetScreenLines(int top, int lines) {
++    screen_top = top < 0 ? 0 : top;
++    screen_lines = lines < 0 ? 0 : lines;
++}
++// Visible part of the display, in display_size rows.
++static void VisibleRows(int* first, int* count) {
++    int scale = display_size.y > 240 ? 2 : 1;
++    int top = screen_top * scale;
++    int lines = screen_lines ? screen_lines * scale : display_size.y;
++    if (top >= display_size.y) {
++        top = 0;
++    }
++    if (top + lines > display_size.y) {
++        lines = display_size.y - top;
++    }
++    *first = top;
++    *count = lines;
++}
+ static Posi cur_display_size = {-1, -1};
+ static Posi draw_offset = {0, 0};
+ static Posi draw_area_start = {0, 0};
+@@ -844,6 +867,18 @@ static void PlatformBackend_Present(void) {
+ 
+                 WndSize win = {(int)sc_w, (int)sc_h};
+                 SDL_Rect dst = FitGameToWindow(game_aspect, win);
++                if (!debug_show_vram) {
++                    // Only screen_lines rows reach the TV, screen_top rows down
++                    int top, lines;
++                    VisibleRows(&top, &lines);
++                    if (lines < display_size.y && display_size.y > 0) {
++                        int y0 = dst.y + dst.h * top / display_size.y;
++                        int y1 = dst.y + dst.h * (top + lines) / display_size.y;
++                        src.h = show24 ? (Uint32)lines : (Uint32)lines * n;
++                        dst.y = y0;
++                        dst.h = y1 - y0;
++                    }
++                }
+ 
+                 const SDL_GPUBlitInfo blit = {
+                     .source = src,
+@@ -1030,7 +1065,7 @@ static unsigned char* AllocRgb888Region(int x, int y, int w, int h) {
+     return pixels;
+ }
+ 
+-unsigned char* Psyz_VideoAllocCapturedFrame(int* w, int* h) {
++static unsigned char* AllocDisplayRows(int* w, int* h) {
+     *w = display_size.x;
+     *h = display_size.y;
+     if (disp_rgb24 && Build24BitDisplay(*w, *h) && disp24_rgb) {
+@@ -1043,6 +1078,28 @@ unsigned char* Psyz_VideoAllocCapturedFrame(int* w, int* h) {
+     return AllocRgb888Region(display_area.x, display_area.y, *w, *h);
+ }
+ 
++// The captured frame is the whole screen as shown: rows outside the
++// visible lines are black and the picture starts screen_top rows down.
++unsigned char* Psyz_VideoAllocCapturedFrame(int* w, int* h) {
++    unsigned char* rows = AllocDisplayRows(w, h);
++    int top, lines;
++    if (!rows) {
++        return NULL;
++    }
++    VisibleRows(&top, &lines);
++    if (lines < *h) {
++        size_t stride = (size_t)*w * 3;
++        unsigned char* out = calloc((size_t)*h, stride);
++        if (!out) {
++            return rows;
++        }
++        memcpy(out + (size_t)top * stride, rows, (size_t)lines * stride);
++        free(rows);
++        return out;
++    }
++    return rows;
++}
++
+ unsigned char* Psyz_VideoAllocVramDump(int* w, int* h) {
+     *w = VRAM_W;
+     *h = VRAM_H;

@@ -266,11 +266,22 @@ def translate_statement(tpl, outputs, inputs, pins, notes):
 
     if all(l.lower() == 'nop' for l in lines):
         # Empty (or nop-only) template: no data moves through instructions.
-        # Only matched inputs ("0"(x)) carry a value into an output.
+        # Only matched inputs ("0"(x)) carry a value into an output, and an
+        # output in LO ("=l") or HI ("=h") reads the HI/LO pair given as an
+        # "x" input: after mult/multu LO holds the low 32 bits of the 64-bit
+        # product and HI the high 32 bits.
+        hilo = [ops[j][1] for j in range(nout, len(ops)) if con_of(j) == 'x']
         keep = []
         for idx in range(nout):
             src = init.get(idx)
             dst = ops[idx][1]
+            c = con_of(idx).lstrip('=+')
+            if src is None and c in ('l', 'h') and len(hilo) == 1:
+                part = '(unsigned long long)(%s)' % hilo[0]
+                if c == 'h':
+                    part = '(%s >> 32)' % part
+                keep.append('(%s) = (__typeof__(%s))(unsigned int)(%s);' % (dst, dst, part))
+                continue
             if src is not None and re.sub(r'\s+', '', src) != re.sub(r'\s+', '', dst):
                 keep.append('(%s) = (__typeof__(%s))(%s);' % (dst, dst, src))
             elif src is None and 'm' not in con_of(idx):

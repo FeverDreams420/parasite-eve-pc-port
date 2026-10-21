@@ -55,4 +55,10 @@ check(r['unsupported'] and 'syscall' in out, out)
 out, r = run('typedef char t[((u32)&(((S *)0)->m)) == 4 ? 1 : -1];')
 check('__builtin_offsetof(S, m)' in out, out)
 
+# LO/HI outputs read the HI/LO pair given as an "x" input (RotMatrix etc.)
+out, r = run('void f(unsigned a,unsigned b){ unsigned long long p; unsigned lo, hi; p = (unsigned long long)a*b; asm volatile("" : "=l"(lo) : "x"(p)); asm volatile("" : "=h"(hi) : "x"(p)); }')
+check('(lo) = (__typeof__(lo))(unsigned int)((unsigned long long)(p));' in out
+      and '(hi) = (__typeof__(hi))(unsigned int)(((unsigned long long)(p) >> 32));' in out
+      and not r['notes'], out)
+
 print('ok', cases, 'checks')

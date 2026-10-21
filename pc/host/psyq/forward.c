@@ -137,7 +137,39 @@ int pe_psyq_VSyncCallback(void (*f)()) {
 int pe_psyq_ResetCallback(void) { return ResetCallback(); }
 
 /* GPU calls without tagged structures */
-int pe_psyq_ResetGraph(int mode) { return ResetGraph(mode); }
+/* The retail ResetGraph (src/main/psyq/libgpu/sys.c) also sets up libgpu's
+ * own state at 0x8009574C (GpuSystemState, 0x80 bytes): cleared, queue = 1,
+ * VRAM width/height from the tables at 0x800957CC/0x800957D8 indexed by
+ * the GPU type, and the DRAWENV/DISPENV caches filled with 0xFF. The game's
+ * C reads that state - SetDrawArea clamps every coordinate to width-1 /
+ * height-1, so with it left at 0 every clip area became (1023,511) and the
+ * name-entry text was clipped away. The type is detected from the GPU on
+ * hardware; the tables give 1024x512 for both types 0 and 1 (a retail
+ * console's VRAM size), so type 0 is used. */
+int pe_psyq_ResetGraph(int mode) {
+    int r = ResetGraph(mode);
+    switch (mode & 7) {
+    case 0:
+    case 3:
+    case 5: {
+        unsigned char *state = (unsigned char *)0x8009574Cu;
+        const unsigned short *widths = (const unsigned short *)0x800957CCu;
+        const unsigned short *heights = (const unsigned short *)0x800957D8u;
+        const int type = 0;
+        memset(state, 0, 0x80);
+        state[0] = (unsigned char)type;
+        state[1] = 1;                                     /* queue */
+        *(short *)(state + 4) = (short)widths[type * 2];  /* width */
+        *(short *)(state + 6) = (short)heights[type * 2]; /* height */
+        memset(state + 0x10, 0xFF, 0x6C - 0x10);          /* DRAWENV cache */
+        memset(state + 0x6C, 0xFF, 0x80 - 0x6C);          /* DISPENV cache */
+        break;
+    }
+    default:
+        break;
+    }
+    return r;
+}
 int pe_psyq_SetGraphDebug(int level) { return SetGraphDebug(level); }
 void pe_psyq_SetDispMask(int mask) { SetDispMask(mask); }
 int pe_psyq_ClearImage(RECT *r, u_char cr, u_char cg, u_char cb) {
@@ -158,7 +190,15 @@ int pe_psyq_MoveImage(RECT *r, int x, int y) {
     return MoveImage(r, x, y);
 }
 int pe_psyq_DrawSync(int mode) { return DrawSync(mode); }
-DISPENV *pe_psyq_PutDispEnv(DISPENV *env) { return PutDispEnv(env); }
+/* DISPENV.screen places the picture on the TV's 240 lines (Parasite Eve:
+ * 224 lines starting 8 down); PsyZ is told so it shows the rest black
+ * instead of the VRAM rows below the display area (the other frame
+ * buffer, which showed as a strip at the bottom). */
+void Psyz_VideoSetScreenLines(int top, int lines);
+DISPENV *pe_psyq_PutDispEnv(DISPENV *env) {
+    Psyz_VideoSetScreenLines(env->screen.y, env->screen.h);
+    return PutDispEnv(env);
+}
 
 /* SPU library (PsyZ implements it on its SPU register model) */
 void pe_psyq_SpuInit(void) { pe_host_spu_sync(); SpuInit(); pe_host_spu_sync(); }
