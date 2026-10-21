@@ -34,6 +34,9 @@ import pathlib
 import re
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import mips_to_c  # noqa: E402
+
 
 ABI = {'zero': 0, 'at': 1, 'v0': 2, 'v1': 3, 'a0': 4, 'a1': 5, 'a2': 6, 'a3': 7,
        't0': 8, 't1': 9, 't2': 10, 't3': 11, 't4': 12, 't5': 13, 't6': 14, 't7': 15,
@@ -392,17 +395,17 @@ def translate_statement(tpl, outputs, inputs, pins, notes):
                 raise Unsupported('.word 0x%08X is not a COP2 command' % w)
             body.append('Psyz_GteCommand(0x%08Xu);' % w)
         elif mn == 'lwc2':
-            body.append('Psyz_GteDataWrite(%d, *(unsigned int *)%s);' % (gte_reg(args[0]), mem(args[1])))
+            body.append('pe_gte_data_write(%d, *(unsigned int *)%s);' % (gte_reg(args[0]), mem(args[1])))
         elif mn == 'swc2':
-            body.append('*(unsigned int *)%s = Psyz_GteDataRead(%d);' % (mem(args[1]), gte_reg(args[0])))
+            body.append('*(unsigned int *)%s = pe_gte_data_read(%d);' % (mem(args[1]), gte_reg(args[0])))
         elif mn == 'mtc2':
-            body.append('Psyz_GteDataWrite(%d, %s);' % (gte_reg(args[1]), rd(args[0])))
+            body.append('pe_gte_data_write(%d, %s);' % (gte_reg(args[1]), rd(args[0])))
         elif mn == 'mfc2':
-            assign(args[0], 'Psyz_GteDataRead(%d)' % gte_reg(args[1]))
+            assign(args[0], 'pe_gte_data_read(%d)' % gte_reg(args[1]))
         elif mn == 'ctc2':
-            body.append('Psyz_GteCtrlWrite(%d, %s);' % (gte_reg(args[1]), rd(args[0])))
+            body.append('pe_gte_ctrl_write(%d, %s);' % (gte_reg(args[1]), rd(args[0])))
         elif mn == 'cfc2':
-            assign(args[0], 'Psyz_GteCtrlRead(%d)' % gte_reg(args[1]))
+            assign(args[0], 'pe_gte_ctrl_read(%d)' % gte_reg(args[1]))
         elif mn in ('lw', 'lh', 'lhu', 'lb', 'lbu'):
             a = mem(args[1])
             val = {'lw': '*(unsigned int *)%s',
@@ -498,6 +501,7 @@ def constant_offsetof(text, report):
 
 def transform(text, report, relpath):
     text = constant_offsetof(text, report)
+    asm_funcs = []
     out = []
     last = 0
     pins = {}
@@ -543,7 +547,17 @@ def transform(text, report, relpath):
                     report['labels'] += 1
                 else:
                     tpl = template_text(parts[0])
-                    if depth == 0:
+                    if depth == 0 and re.search(r'\.ent\s+\w+', tpl):
+                        # A hand-written routine (PSYQ_ASM_FUNCTION /
+                        # GAME_ASM_FUNCTION): translate it to C.
+                        fname = re.search(r'\.ent\s+(\w+)', tpl).group(1)
+                        mb = re.search(r'^\s*%s:\s*$(.*?)^\s*\.end\s+%s\b' % (re.escape(fname), re.escape(fname)),
+                                       tpl, re.S | re.M)
+                        if not mb:
+                            raise Unsupported('cannot find the body of ' + fname)
+                        asm_funcs.append((fname, mb.group(1)))
+                        rep = ''
+                    elif depth == 0:
                         names = re.findall(r'\.globl\s+(\w+)', tpl)
                         report['toplevel_asm_dropped'].append({'file': relpath, 'line': line,
                                                                'defines': names})
@@ -574,11 +588,23 @@ def transform(text, report, relpath):
         out.append(rep)
         last = end
     out.append(text[last:])
+    if asm_funcs:
+        tag = re.sub(r'\W', '_', pathlib.Path(relpath).name)
+        try:
+            csrc, warns = mips_to_c.translate_group(tag, asm_funcs)
+            out.append('\n/* Hand-written MIPS routines of this file, translated by tools/pc/mips_to_c.py */\n')
+            out.append(csrc)
+            for n, _ in asm_funcs:
+                report['asm_functions'].append({'file': relpath, 'name': n,
+                                                'warnings': [w for w in warns if w.startswith(n + ':')]})
+        except mips_to_c.AsmError as e:
+            report['unsupported'].append({'file': relpath, 'line': 0, 'reason': 'asm routines: %s' % e,
+                                          'asm': ', '.join(n for n, _ in asm_funcs)})
     return ''.join(out)
 
 
 def new_report():
-    return {'pins': 0, 'offsetof': 0, 'global_pins': [], 'labels': 0, 'barriers': 0, 'translated': 0,
+    return {'pins': 0, 'asm_functions': [], 'offsetof': 0, 'global_pins': [], 'labels': 0, 'barriers': 0, 'translated': 0,
             'toplevel_asm_dropped': [], 'unsupported': [], 'notes': []}
 
 

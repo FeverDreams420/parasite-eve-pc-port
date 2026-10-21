@@ -52,6 +52,12 @@ static const char *trap_name(unsigned int addr) {
     return NULL;
 }
 
+/* A translated assembler routine reached a `break` instruction. */
+void pe_asm_break(const char *name) {
+    fprintf(stderr, "pe: break instruction in %s\n", name);
+    abort();
+}
+
 void pe_host_stub_hit(const char *name) {
     /* Report each unimplemented PSY-Q function once. */
     static const char *seen[512];

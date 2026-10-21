@@ -31,20 +31,20 @@ check('(a) = (__typeof__(a))(b);' in out and out.count('do {') == 2, out)
 
 # mfc2 into a register-pinned output (macro written for a caller's pins)
 out, r = run('void f(void){ register int gx asm("$8"); asm volatile("mfc2 $8,$25" : "=r"(gx)); }')
-check('PE_R(8) = Psyz_GteDataRead(25);' in out and '(gx) = (__typeof__(gx))(uintptr_t)PE_R(8);' in out, out)
+check('PE_R(8) = pe_gte_data_read(25);' in out and '(gx) = (__typeof__(gx))(uintptr_t)PE_R(8);' in out, out)
 
 # input bound to a pinned variable feeds the register the template names
 out, r = run('void f(int *p){ register int *o asm("$8") = p; asm volatile("swc2 $20,0($8)" : : "r"(o) : "memory"); }')
-check('PE_R(8) = (unsigned int)(uintptr_t)(o);' in out and '*(unsigned int *)((uintptr_t)PE_R(8) + (0)) = Psyz_GteDataRead(20);' in out, out)
+check('PE_R(8) = (unsigned int)(uintptr_t)(o);' in out and '*(unsigned int *)((uintptr_t)PE_R(8) + (0)) = pe_gte_data_read(20);' in out, out)
 
 # value carried between statements through the virtual register file
 out, r = run('void f(void){ asm volatile("cfc2 $13,$0" : : : "$13"); asm volatile("ctc2 $13,$0" : : : "$13"); }')
-check('PE_R(13) = Psyz_GteCtrlRead(0);' in out and 'Psyz_GteCtrlWrite(0, PE_R(13));' in out
+check('PE_R(13) = pe_gte_ctrl_read(0);' in out and 'pe_gte_ctrl_write(0, PE_R(13));' in out
       and any('carried' in n['note'] for n in r['notes']), out)
 
 # COP2 command word and lwc2 through an operand
 out, r = run('void f(void*q){ asm volatile("lwc2 $0,4(%0)\\n\\t.word 0x4A180001" : : "r"(q)); }')
-check('Psyz_GteDataWrite(0, *(unsigned int *)((uintptr_t)__pe_o0 + (4)));' in out
+check('pe_gte_data_write(0, *(unsigned int *)((uintptr_t)__pe_o0 + (4)));' in out
       and 'Psyz_GteCommand(0x4A180001u);' in out, out)
 
 # anything else is reported and left untouched

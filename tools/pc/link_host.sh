@@ -28,9 +28,7 @@ case "$TARGET" in
 esac
 mkdir -p "$OUT/objs" "$OUT/rt"
 
-"$CC" $CFLAGS -c pc/host/game_asm_host.c -o "$OUT/rt/game_asm_host.o"
 find "$HOST/src" -name '*.c.o' | sort > "$OUT/game_objs.txt"
-echo "$OUT/rt/game_asm_host.o" >> "$OUT/game_objs.txt"
 
 # Shims: pc/host/psyq/*.c (PSY-Q functions implemented on the host).
 : > "$OUT/shim_objs.txt"
@@ -89,7 +87,7 @@ for rf in "$OUT"/ovl/rename_*.txt; do
     done < "$OUT/ovl/objs_$ov.txt"
 done
 
-for f in pc/host/pe_host_mem.c pc/host/pe_host_main.c pc/host/pe_host_disc.c pc/host/pe_host_sha1.c pc/host/pe_host_overlays.c "$OUT/ovl/overlay_table.c" "$OUT/func_table.c" "$OUT/psyq_traps.c" "$OUT/psyq_stubs.c"; do
+for f in pc/host/pe_host_mem.c pc/host/pe_host_main.c pc/host/pe_host_disc.c pc/host/pe_host_sha1.c pc/host/pe_host_gte.c pc/host/pe_host_overlays.c "$OUT/ovl/overlay_table.c" "$OUT/func_table.c" "$OUT/psyq_traps.c" "$OUT/psyq_stubs.c"; do
     "$CC" $CFLAGS -Ipc/host -c "$f" -o "$OUT/rt/$(basename "$f" .c).o"
 done
 

@@ -84,7 +84,8 @@ def main():
     if '--extra-refs' in sys.argv:
         # Names the overlays leave to the main link (tools/pc/gen_overlays.py).
         guest_undef |= set(read_list(sys.argv[sys.argv.index('--extra-refs') + 1])) - game_def_names
-    host_provided = {'pe_mips_gpr', 'Psyz_GteDataRead', 'Psyz_GteDataWrite', 'Psyz_GteCtrlRead',
+    host_provided = {'pe_mips_gpr', 'pe_gte_data_read', 'pe_gte_data_write', 'pe_gte_ctrl_read',
+                     'pe_gte_ctrl_write', 'pe_cop0_status', 'pe_asm_break', 'Psyz_GteDataRead', 'Psyz_GteDataWrite', 'Psyz_GteCtrlRead',
                      'Psyz_GteCtrlWrite', 'Psyz_GteCommand'}
 
     def addr_of(s):

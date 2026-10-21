@@ -81,14 +81,6 @@ int pe_psyq_MoveImage(RECT *r, int x, int y) { return MoveImage(r, x, y); }
 int pe_psyq_DrawSync(int mode) { return DrawSync(mode); }
 DISPENV *pe_psyq_PutDispEnv(DISPENV *env) { return PutDispEnv(env); }
 
-/* GTE functions the decomp keeps as hand-written MIPS (msc00, msc01, msc02,
- * mtx_003): PsyZ's versions take the same MATRIX/VECTOR layouts. */
-void pe_psyq_InitGeom(void) { InitGeom(); }
-long pe_psyq_SquareRoot0(long a) { return SquareRoot0(a); }
-void pe_psyq_VectorNormal(VECTOR *a, VECTOR *b) { VectorNormal(a, b); }
-long pe_psyq_VectorNormalS(VECTOR *a, SVECTOR *b) { return VectorNormalS(a, b); }
-MATRIX *pe_psyq_CompMatrix(MATRIX *a, MATRIX *b, MATRIX *c) { return CompMatrix(a, b, c); }
-
 /* SPU library (PsyZ implements it on its SPU register model) */
 void pe_psyq_SpuInit(void) { pe_host_spu_sync(); SpuInit(); pe_host_spu_sync(); }
 void pe_psyq_SpuStart(void) { pe_host_spu_sync(); SpuStart(); pe_host_spu_sync(); }
@@ -156,7 +148,3 @@ long pe_psyq_SpuSetReverbModeType(long mode) {
     return 0;
 }
 
-/* mtx_006 (PushMatrix/PopMatrix) is hand-written MIPS in the decomp; PsyZ
- * keeps the same matrix stack semantics. */
-void pe_psyq_PushMatrix(void) { PushMatrix(); }
-void pe_psyq_PopMatrix(void) { PopMatrix(); }

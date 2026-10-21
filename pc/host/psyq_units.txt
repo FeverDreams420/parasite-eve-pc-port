@@ -73,3 +73,10 @@ src/main/psyq/libgpu/gpu_build.c
 src/main/psyq/libspu/s_svva.c
 src/main/psyq/libspu/s_gvex.c
 src/main/psyq/libspu/s_srmd.c
+# Hand-written PSY-Q GTE routines, translated to C by tools/pc/mips_to_c.py
+# (retail behaviour, including inputs where PsyZ's own versions differ).
+src/main/psyq/libgte/msc00.c
+src/main/psyq/libgte/msc01.c
+src/main/psyq/libgte/msc02.c
+src/main/psyq/libgte/mtx_003.c
+src/main/psyq/libgte/mtx_006.c

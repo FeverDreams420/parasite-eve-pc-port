@@ -169,7 +169,8 @@ def main():
         for k, a in ov['symtxt'].items():
             sym_global.setdefault(k, set()).add(a)
     sym_unique = {k: next(iter(v)) for k, v in sym_global.items() if len(v) == 1}
-    host_provided = {'pe_mips_gpr', 'Psyz_GteDataRead', 'Psyz_GteDataWrite', 'Psyz_GteCtrlRead',
+    host_provided = {'pe_mips_gpr', 'pe_gte_data_read', 'pe_gte_data_write', 'pe_gte_ctrl_read',
+                     'pe_gte_ctrl_write', 'pe_cop0_status', 'pe_asm_break', 'Psyz_GteDataRead', 'Psyz_GteDataWrite', 'Psyz_GteCtrlRead',
                      'Psyz_GteCtrlWrite', 'Psyz_GteCommand'}
     psyq_all = {e['name'] for e in main_ft['entries'] if e['unit'].startswith('psyq/')}
     global_refs = set()

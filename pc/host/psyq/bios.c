@@ -48,3 +48,9 @@ void pe_psyq_srand(unsigned int seed) { g_rand_seed = seed; }
 /* libpress streaming ring (movies): not used until movie playback exists. */
 void StUnSetRing(void); /* PsyZ */
 void pe_psyq_StUnSetRing(void) { StUnSetRing(); }
+
+/* _patch_gte (called by InitGeom) copies a handler into the BIOS exception
+ * code so GTE state survives interrupts, through the B0 function table. The
+ * host has no BIOS and its interrupt model never touches GTE state, so there
+ * is nothing to patch. */
+void pe_psyq__patch_gte(void) {}
