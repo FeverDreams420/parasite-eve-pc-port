@@ -261,8 +261,9 @@ def translate_statement(tpl, outputs, inputs, pins, notes):
                 raise Unsupported('matching constraint to non-output %d' % k)
             init[k] = ops[j][1]
 
-    if not lines:
-        # Empty template: emits no instruction. Only matched inputs move data.
+    if all(l.lower() == 'nop' for l in lines):
+        # Empty (or nop-only) template: no data moves through instructions.
+        # Only matched inputs ("0"(x)) carry a value into an output.
         keep = []
         for idx in range(nout):
             src = init.get(idx)

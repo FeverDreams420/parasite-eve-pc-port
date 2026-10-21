@@ -20,7 +20,7 @@ if [ -f "$PATCH" ]; then
         || patch -s "$OUT.patched.c" < "$PATCH"
     IN="$OUT.patched.c"
 fi
-COMMON="$ARCH -fcommon -funsigned-char -fno-strict-aliasing -fwrapv -D__PE_HOST__=1"
+COMMON="$ARCH -fno-pie -fno-stack-protector -fcommon -funsigned-char -fno-strict-aliasing -fwrapv -D__PE_HOST__=1"
 "$CC" $COMMON -E -I"$SRCDIR" -I"$ROOT/pc/host/include" -I"$ROOT/include" -I"$ROOT/tools/m2c" "$@" "$IN" -o "$OUT.i"
 python3 "$ROOT/tools/pc/prep_host_sources.py" "$OUT.i" "$OUT.host.c" --report "$OUT.asm.json" || true
 "$CC" $COMMON -std=gnu11 -O1 -g -Wuninitialized -Wmaybe-uninitialized \
