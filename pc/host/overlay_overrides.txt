@@ -1,0 +1,13 @@
+# Overlay functions replaced by host code: <overlay> <function> <host symbol>
+# The source files that define only replaced functions are left out of that
+# overlay's link, and every reference goes to the host symbol.
+#
+# sys_reset holds the PSY-Q libpress MDEC driver, which programs the MDEC and
+# DMA channels 0/1 through their registers. The host has no MDEC chip: these
+# go to the software MDEC in pc/host/psyq/mdec.c.
+sys_reset func_8010C0FC pe_mdec_reset
+sys_reset func_8010C1EC pe_mdec_in
+sys_reset func_8010C27C pe_mdec_out
+sys_reset func_8010C308 pe_mdec_in_sync
+sys_reset func_8010C39C pe_mdec_out_sync
+sys_reset func_8010C430 pe_mdec_status

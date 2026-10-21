@@ -99,6 +99,14 @@ def main():
     main_by_addr = {e['addr']: e['name'] for e in main_ft['entries']}
     main_abs = json.load(open('build/pc-tables/pe_abs_syms.json'))
 
+    overrides = {}
+    op = pathlib.Path('pc/host/overlay_overrides.txt')
+    if op.exists():
+        for line in op.read_text().splitlines():
+            line = line.split('#')[0].split()
+            if len(line) == 3:
+                overrides.setdefault(line[0], {})[line[1]] = line[2]
+
     overlays = []
     all_funcs = {}  # name -> list of (overlay, addr)
     for cfgp in sorted(pathlib.Path('configs/USA/overlays').glob('*.yaml')):
@@ -198,10 +206,14 @@ def main():
         summary['with_code'] += 1
         defined, undef = {}, set()
         objs = []
+        ovr = overrides.get(n, {})
         for src in ov['units']:
             o = host_dir / (src + '.o')
-            objs.append(str(o))
             d, u = host_syms(o)
+            funcs_here = {k for k, t in d.items() if t in 'TW'}
+            if funcs_here and funcs_here <= set(ovr):
+                continue  # every function of this file is replaced by host code
+            objs.append(str(o))
             defined.update(d)
             undef |= u
         own_funcs = {f['name']: f['addr'] for f in ov['funcs']}
@@ -219,6 +231,9 @@ def main():
                     rename[s] = tag + s
                     abs_lines.append('%s%s%s = 0x%08X;' % (PREFIX, tag, s, a))
         for s in sorted(undef - set(defined)):
+            if s in ovr:
+                rename[s] = ovr[s]  # replaced by host code
+                continue
             if s in own_funcs:
                 rename[s] = tag + s
                 continue
@@ -258,17 +273,21 @@ def main():
         (out / ('rename_%s.txt' % n)).write_text(''.join('%s%s %s%s\n' % (PREFIX, k, PREFIX, v) for k, v in sorted(rename.items())))
         (out / ('objs_%s.txt' % n)).write_text('\n'.join(objs) + '\n')
         host_defined = {k for k, t in defined.items() if t in 'TW'}
-        gl = sorted((f['addr'], tag + f['name'], f['file_off'], f['size']) for f in ov['funcs']
-                    if f['bind'] == 'GLOBAL' and f['name'] in host_defined)
-        no_host = sorted(f['name'] for f in ov['funcs'] if f['bind'] == 'GLOBAL' and f['name'] not in host_defined)
+        gl = sorted((f['addr'], ovr.get(f['name'], tag + f['name']), f['file_off'], f['size']) for f in ov['funcs']
+                    if f['bind'] == 'GLOBAL' and (f['name'] in host_defined or f['name'] in ovr))
+        no_host = sorted(f['name'] for f in ov['funcs'] if f['bind'] == 'GLOBAL' and f['name'] not in host_defined
+                         and f['name'] not in ovr)
         if no_host:
             summary.setdefault('no_host_version', {})[n] = no_host
         summary['functions'] += len(gl)
         table_rows.append((ov, gl))
 
+    declared = set()
     for ov, gl in table_rows:
         for _, hn, _, _ in gl:
-            table_c.append('extern void %s(void);' % hn)
+            if hn not in declared:
+                declared.add(hn)
+                table_c.append('extern void %s(void);' % hn)
     for ov, gl in table_rows:
         if gl:
             table_c.append('static const PeHostFunc ovl_funcs_%s[] = {' % safe(ov['name']))

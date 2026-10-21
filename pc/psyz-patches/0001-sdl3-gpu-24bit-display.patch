@@ -1,0 +1,157 @@
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index bfbaf78..14d2b66 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -77,6 +77,11 @@ static SDL_GPUGraphicsPipeline* pipe_clear = NULL;
+ static SDL_GPUCommandBuffer* pending_cmd = NULL;
+ 
+ static Posi display_area = {0, 0};
++// 24-bit display mode (movies): the display area holds packed RGB888 bytes,
++// decoded on the CPU into disp24_tex for presentation.
++static bool disp_rgb24 = false;
++static SDL_GPUTexture* disp24_tex = NULL;
++static unsigned char* disp24_rgb = NULL;
+ static Posi display_size = {256, 240};
+ static Posi cur_display_size = {-1, -1};
+ static Posi draw_offset = {0, 0};
+@@ -688,6 +693,93 @@ static void ApplyPendingInternalRes(void) {
+     INFOF("internal resolution set to %dx (%dx%d)", n, VRAM_W * n, VRAM_H * n);
+ }
+ 
++static bool DownloadVramRegionAsRGBA8888(int x, int y, int w, int h, u8* out);
++
++// Decode the 24-bit display area (w pixels = w*3/2 VRAM halfwords per row)
++// into disp24_rgb (RGB888) and upload it to disp24_tex as RGBA8888.
++static bool Build24BitDisplay(int w, int h) {
++    int hw = (w * 3 + 1) / 2;
++    if (display_area.x + hw > VRAM_W) {
++        hw = VRAM_W - display_area.x;
++    }
++    if (w <= 0 || h <= 0 || hw <= 0 || display_area.y + h > VRAM_H) {
++        return false;
++    }
++    u8* rgba = malloc((size_t)hw * h * 4);
++    u16* half = malloc((size_t)hw * h * 2);
++    unsigned char* rgb = realloc(disp24_rgb, (size_t)w * h * 3);
++    if (!rgba || !half || !rgb) {
++        free(rgba);
++        free(half);
++        return false;
++    }
++    disp24_rgb = rgb;
++    if (!DownloadVramRegionAsRGBA8888(display_area.x, display_area.y, hw, h, rgba)) {
++        free(rgba);
++        free(half);
++        return false;
++    }
++    ConvertRgba8888ToRgb5551(rgba, half, (size_t)hw * h);
++    for (int y = 0; y < h; y++) {
++        const u8* row = (const u8*)(half + (size_t)y * hw);
++        size_t row_bytes = (size_t)hw * 2;
++        for (int x = 0; x < w; x++) {
++            size_t o = (size_t)x * 3;
++            unsigned char* d = rgb + ((size_t)y * w + x) * 3;
++            d[0] = o + 0 < row_bytes ? row[o + 0] : 0;
++            d[1] = o + 1 < row_bytes ? row[o + 1] : 0;
++            d[2] = o + 2 < row_bytes ? row[o + 2] : 0;
++        }
++    }
++    free(half);
++    if (!disp24_tex) {
++        const SDL_GPUTextureCreateInfo info = {
++            .type = SDL_GPU_TEXTURETYPE_2D,
++            .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
++            .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER,
++            .width = 640,
++            .height = 512,
++            .layer_count_or_depth = 1,
++            .num_levels = 1,
++        };
++        disp24_tex = SDL_CreateGPUTexture(device, &info);
++        if (!disp24_tex) {
++            free(rgba);
++            return false;
++        }
++    }
++    if (w > 640 || h > 512) {
++        free(rgba);
++        return false;
++    }
++    for (int i = 0; i < w * h; i++) {
++        rgba[i * 4 + 0] = rgb[i * 3 + 0];
++        rgba[i * 4 + 1] = rgb[i * 3 + 1];
++        rgba[i * 4 + 2] = rgb[i * 3 + 2];
++        rgba[i * 4 + 3] = 255;
++    }
++    SDL_GPUCommandBuffer* cmd = AcquireCmd();
++    u8* map = cmd ? SDL_MapGPUTransferBuffer(device, tex_upload_transfer, true) : NULL;
++    if (!map) {
++        free(rgba);
++        return false;
++    }
++    memcpy(map, rgba, (size_t)w * h * 4);
++    SDL_UnmapGPUTransferBuffer(device, tex_upload_transfer);
++    free(rgba);
++    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
++    const SDL_GPUTextureTransferInfo src = {
++        .transfer_buffer = tex_upload_transfer,
++        .pixels_per_row = (Uint32)w,
++        .rows_per_layer = (Uint32)h,
++    };
++    const SDL_GPUTextureRegion dst = {
++        .texture = disp24_tex, .w = (Uint32)w, .h = (Uint32)h, .d = 1};
++    SDL_UploadToGPUTexture(copy, &src, &dst, false);
++    SDL_EndGPUCopyPass(copy);
++    return true;
++}
++
+ static void PlatformBackend_Present(void) {
+     if (!sdl3_window && !InitPlatform()) {
+         return;
+@@ -699,6 +791,9 @@ static void PlatformBackend_Present(void) {
+ 
+     ApplyPendingInternalRes();
+ 
++    bool show24 = disp_on && disp_rgb24 && !debug_show_vram &&
++                  Build24BitDisplay(display_size.x, display_size.y);
++
+     SDL_GPUCommandBuffer* cmd = AcquireCmd();
+     if (!cmd) {
+         return;
+@@ -732,6 +827,13 @@ static void PlatformBackend_Present(void) {
+                 };
+                 float game_aspect =
+                     GetCurrentGameAspectRatio(display_size.x, display_size.y);
++                if (show24) {
++                    src.texture = disp24_tex;
++                    src.x = 0;
++                    src.y = 0;
++                    src.w = (Uint32)display_size.x;
++                    src.h = (Uint32)display_size.y;
++                }
+                 if (debug_show_vram) {
+                     src.x = 0;
+                     src.y = 0;
+@@ -931,6 +1033,13 @@ static unsigned char* AllocRgb888Region(int x, int y, int w, int h) {
+ unsigned char* Psyz_VideoAllocCapturedFrame(int* w, int* h) {
+     *w = display_size.x;
+     *h = display_size.y;
++    if (disp_rgb24 && Build24BitDisplay(*w, *h) && disp24_rgb) {
++        unsigned char* copy = malloc((size_t)*w * *h * 3);
++        if (copy) {
++            memcpy(copy, disp24_rgb, (size_t)*w * *h * 3);
++        }
++        return copy;
++    }
+     return AllocRgb888Region(display_area.x, display_area.y, *w, *h);
+ }
+ 
+@@ -1039,7 +1148,7 @@ void Draw_DisplayVerticalRange(unsigned int start, int unsigned end) {
+ 
+ void Draw_SetDisplayMode(DisplayMode* mode) {
+     // TODO the interlace flag is ignored
+-    // TODO rgb24 is ignored, the color output will always max the color space
++    disp_rgb24 = mode->rgb24 != 0;
+     if (mode->reversed) {
+         WARNF("reverse mode not supported");
+     }

@@ -227,8 +227,12 @@ DslFILE *pe_psyq_DsSearchFile(DslFILE *fp, char *path) {
  * menu_memcard). Streaming playback is not implemented yet: commands are
  * accepted and report success so callers do not wait forever. */
 static void *g_ready_cb;
+void pe_host_stream_setloc(const unsigned char *param);
+
 int pe_psyq_DsControl(unsigned char com, unsigned char *param, unsigned char *result) {
-    (void)param;
+    if (com == 0x02) { /* CdlSetloc */
+        pe_host_stream_setloc(param);
+    }
     if (getenv("PE_LOG_CD")) {
         fprintf(stderr, "pe: DsControl 0x%02X (not implemented)\n", com);
     }
