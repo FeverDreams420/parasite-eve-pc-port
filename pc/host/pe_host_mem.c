@@ -3,7 +3,12 @@
  *
  * The game's data lives at its retail addresses, so the program reserves
  * those ranges at the same addresses:
- *   0x80000000  2 MiB main RAM (read/write/execute: holds the jump stubs)
+ *   0x80000000  2 MiB main RAM (read/write/execute: holds the jump stubs),
+ *               and the same 2 MiB again at 0x80200000, 0x80400000 and
+ *               0x80600000: retail consoles set DRAM_CTRL (1F801060h) to
+ *               0B88h, an 8 MB bank, so the RAM repeats across 8 MB
+ *               (psx-spx "Memory Control"); Parasite Eve reads through
+ *               these mirrors (an out-of-range floor neighbour index).
  *   0x1F800000  scratchpad (1 KiB) and the I/O window after it
  * then copies the text/data image of your own SLUS_006.62 there and writes
  * a 5-byte x86 `jmp` at every decompiled function's retail address, so a
@@ -20,12 +25,14 @@
 #include <windows.h>
 #else
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 unsigned int pe_mips_gpr[32];
 
 #define PE_RAM_BASE 0x80000000u
 #define PE_RAM_SIZE 0x00200000u
+#define PE_RAM_MIRRORS 4 /* 8 MB window */
 #define PE_SCRATCH_BASE 0x1F800000u
 #define PE_SCRATCH_SIZE 0x00010000u /* scratchpad + I/O window, 64 KiB */
 
@@ -47,6 +54,39 @@ static void *map_fixed(unsigned int addr, unsigned int size, int exec) {
     return p;
 }
 
+/* Main RAM: one 2 MiB block of shared memory viewed at each mirror. */
+static int map_ram(void) {
+    int k;
+#ifdef _WIN32
+    HANDLE h = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_EXECUTE_READWRITE, 0, PE_RAM_SIZE, NULL);
+    if (!h) {
+        return -1;
+    }
+    for (k = 0; k < PE_RAM_MIRRORS; k++) {
+        void *want = (void *)(uintptr_t)(PE_RAM_BASE + k * PE_RAM_SIZE);
+        void *p = MapViewOfFileEx(h, FILE_MAP_ALL_ACCESS | FILE_MAP_EXECUTE, 0, 0, PE_RAM_SIZE, want);
+        if (p != want) {
+            return -1;
+        }
+    }
+#else
+    int fd = memfd_create("pe-ps1-ram", 0);
+    if (fd < 0 || ftruncate(fd, PE_RAM_SIZE) != 0) {
+        return -1;
+    }
+    for (k = 0; k < PE_RAM_MIRRORS; k++) {
+        void *want = (void *)(uintptr_t)(PE_RAM_BASE + k * PE_RAM_SIZE);
+        void *p = mmap(want, PE_RAM_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC,
+                       MAP_SHARED | MAP_FIXED_NOREPLACE, fd, 0);
+        if (p != want) {
+            return -1;
+        }
+    }
+    close(fd);
+#endif
+    return 0;
+}
+
 static unsigned int rd32(const unsigned char *p) {
     return p[0] | (p[1] << 8) | (p[2] << 16) | ((unsigned int)p[3] << 24);
 }
@@ -56,9 +96,10 @@ int pe_host_map_memory(void) {
         fprintf(stderr, "pe: this build must be 32-bit\n");
         return -1;
     }
-    if (!map_fixed(PE_RAM_BASE, PE_RAM_SIZE, 1)) {
-        fprintf(stderr, "pe: cannot reserve PS1 RAM at 0x%08X "
-                        "(32-bit Windows builds must be large-address-aware)\n", PE_RAM_BASE);
+    if (map_ram() != 0) {
+        fprintf(stderr, "pe: cannot reserve PS1 RAM at 0x%08X..0x%08X "
+                        "(32-bit Windows builds must be large-address-aware)\n",
+                PE_RAM_BASE, PE_RAM_BASE + PE_RAM_MIRRORS * PE_RAM_SIZE);
         return -1;
     }
     if (!map_fixed(PE_SCRATCH_BASE, PE_SCRATCH_SIZE, 0)) {
