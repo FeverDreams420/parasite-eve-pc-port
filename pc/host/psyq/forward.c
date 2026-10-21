@@ -53,9 +53,65 @@ long pe_psyq_SetRCnt(long spec, unsigned short target, long mode) { return SetRC
 long pe_psyq_GetRCnt(long spec) { return GetRCnt(spec); }
 long pe_psyq_StartRCnt(long spec) { return StartRCnt(spec); }
 long pe_psyq_StopRCnt(long spec) { return StopRCnt(spec); }
+/* Debugging aids, all off unless set in the environment:
+ *   PE_CAPTURE_DIR=dir PE_CAPTURE_EVERY=n  write frame_NNNNN.ppm every n frames
+ *   PE_CAPTURE_VRAM=1                      write the whole VRAM as well
+ *   PE_EXIT_AFTER=n                        quit after n frames */
+#include <stdio.h>
+#include <stdlib.h>
+unsigned char *Psyz_VideoAllocCapturedFrame(int *w, int *h);
+unsigned char *Psyz_VideoAllocVramDump(int *w, int *h);
+static unsigned int g_frames;
+
+static void write_ppm(const char *path, const unsigned char *rgb, int w, int h) {
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        return;
+    }
+    fprintf(f, "P6\n%d %d\n255\n", w, h);
+    fwrite(rgb, 3, (size_t)w * h, f);
+    fclose(f);
+}
+
+static void debug_frame(void) {
+    static int every = -1, exit_after = -1;
+    static const char *dir;
+    if (every < 0) {
+        dir = getenv("PE_CAPTURE_DIR");
+        every = getenv("PE_CAPTURE_EVERY") ? atoi(getenv("PE_CAPTURE_EVERY")) : 0;
+        exit_after = getenv("PE_EXIT_AFTER") ? atoi(getenv("PE_EXIT_AFTER")) : 0;
+    }
+    g_frames++;
+    if (dir && every > 0 && g_frames % (unsigned)every == 0) {
+        char path[512];
+        int w, h;
+        unsigned char *rgb = Psyz_VideoAllocCapturedFrame(&w, &h);
+        if (rgb) {
+            snprintf(path, sizeof(path), "%s/frame_%05u.ppm", dir, g_frames);
+            write_ppm(path, rgb, w, h);
+            free(rgb);
+        }
+        if (getenv("PE_CAPTURE_VRAM") && (rgb = Psyz_VideoAllocVramDump(&w, &h))) {
+            snprintf(path, sizeof(path), "%s/vram_%05u.ppm", dir, g_frames);
+            write_ppm(path, rgb, w, h);
+            free(rgb);
+        }
+    }
+    if (exit_after > 0 && g_frames >= (unsigned)exit_after) {
+        fprintf(stderr, "pe: PE_EXIT_AFTER reached (%u frames)\n", g_frames);
+        fflush(stderr);
+        exit(0);
+    }
+}
+
 int pe_psyq_VSync(int mode) {
+    int r;
     pe_host_spu_sync();
-    return VSync(mode);
+    r = VSync(mode);
+    if (mode == 0 || mode > 1) {
+        debug_frame();
+    }
+    return r;
 }
 static void (*g_vsync_func)(void);
 static void vsync_wrap(void) {
