@@ -33,9 +33,8 @@ cp -R "$HERE/pc/." pc/
 cp -R "$HERE/tools/pc/." tools/pc/
 cp "$HERE/ROADMAP.md" .
 
-git -C third_party/psyz apply \
-    "$DEST/pc/psyz-patches/0001-sdl3-gpu-24bit-display.patch" \
-    "$DEST/pc/psyz-patches/0002-sdl3-gpu-screen-lines.patch"
+# PsyZ patches, in order (pc/psyz-patches/0001-..., 0002-..., ...).
+git -C third_party/psyz apply "$DEST"/pc/psyz-patches/[0-9][0-9][0-9][0-9]-*.patch
 
 echo
 echo "Source tree ready in $DEST (branch native)."

@@ -5,11 +5,11 @@ A native Windows/Linux build of **Parasite Eve** (PlayStation, North America,
 emulator, no interpreter. The PlayStation hardware it talks to (graphics,
 sound, CD drive, memory cards, controllers) is replaced by PC code.
 
-> **Status: boots and plays the opening.** On a real disc image it reaches the
-> publisher screen, the opening movie, the title screen, the New Game / Tutorial
-> menu, the New Game movie, the first scene outside Carnegie Hall (Aya, her date
-> and the doorman, with dialogue) and the name-entry screen. Beyond that point
-> has not been tested yet. See [ROADMAP.md](ROADMAP.md) for where it is going
+> **Status: plays the opening of Disc 1.** On a real disc image it plays the
+> publisher screen, the opening movie, the title screen and menu, the New Game
+> movie, the scene outside Carnegie Hall, the name entry and the opera, up to
+> the stage scene with Melissa, with music. Beyond that point has not been
+> tested yet. See [ROADMAP.md](ROADMAP.md) for where it is going
 > and [pc/PROGRESS.md](pc/PROGRESS.md) for the detailed technical log.
 
 **You need your own copy of the game.** This repository contains no game data:
@@ -108,8 +108,11 @@ Debug options (environment variables): `PE_CAPTURE_DIR` + `PE_CAPTURE_EVERY`
 
 ## Known limits right now
 
-- Only Disc 1, and only the opening has been played.
-- No movie audio yet (XA audio sectors are skipped).
+- Only Disc 1, and only up to the stage scene with Melissa.
+- No movie audio yet (XA audio sectors are skipped); music and sound effects
+  play.
+- Small coloured streaks at the characters' shadows on Direct3D 12 (not seen
+  with other renderers yet).
 - Some values the game reads from PS1 kernel RAM through NULL pointers are not
   known; they read as 0 (see `pc/host/pe_host_lowmem.c`).
 - 32-bit build only (the identity-mapped design needs it).
