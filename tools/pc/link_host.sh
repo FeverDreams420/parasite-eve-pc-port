@@ -20,22 +20,34 @@ echo build/pc-host/game_asm_host.o >> "$OUT/game_objs.txt"
 for f in pc/host/psyq/*.c; do
     [ -f "$f" ] || continue
     o="$OUT/rt/shim_$(basename "$f" .c).o"
-    "$CC" $CFLAGS -Ipc/host -Ithird_party/psyz/psyz/include -c "$f" -o "$o"
+    "$CC" $CFLAGS -D__psyz -Ipc/host -Ithird_party/psyz/psyz/include -c "$f" -o "$o"
     echo "$o" >> "$OUT/shim_objs.txt"
 done
 
-python3 tools/pc/gen_link.py "$OUT" --game-objs "$OUT/game_objs.txt" --shim-objs "$OUT/shim_objs.txt"
+# Decomp PSY-Q units compiled for the host (pc/host/psyq_units.txt).
+: > "$OUT/psyq_objs.txt"
+for f in $(grep -v '^#' pc/host/psyq_units.txt); do
+    o="build/pc-psyq/$f.o"
+    if [ ! -f "$o" ] || [ "$f" -nt "$o" ]; then
+        tools/pc/host_compile.sh "$f" "$o" >/dev/null
+    fi
+    echo "$o" >> "$OUT/psyq_objs.txt"
+done
+
+python3 tools/pc/gen_link.py "$OUT" --game-objs "$OUT/game_objs.txt" \
+    --psyq-objs "$OUT/psyq_objs.txt" --shim-objs "$OUT/shim_objs.txt"
 { cat "$OUT/psyq_rename.txt"; echo "main pe_game_main"; } > "$OUT/rename_all.txt"
 
 : > "$OUT/link_objs.txt"
 while read -r o; do
-    d="$OUT/objs/${o#build/pc-host/}"
+    d="$OUT/objs/${o#build/}"
     mkdir -p "$(dirname "$d")"
-    objcopy --redefine-syms="$OUT/rename_all.txt" "$o" "$d"
+    objcopy --redefine-syms="$OUT/alias_rename.txt" "$o" "$d"
+    objcopy --redefine-syms="$OUT/rename_all.txt" "$d"
     echo "$d" >> "$OUT/link_objs.txt"
-done < "$OUT/game_objs.txt"
+done < <(cat "$OUT/game_objs.txt" "$OUT/psyq_objs.txt")
 
-for f in pc/host/pe_host_mem.c pc/host/pe_host_main.c "$OUT/func_table.c" "$OUT/psyq_traps.c" "$OUT/psyq_stubs.c"; do
+for f in pc/host/pe_host_mem.c pc/host/pe_host_main.c pc/host/pe_host_disc.c "$OUT/func_table.c" "$OUT/psyq_traps.c" "$OUT/psyq_stubs.c"; do
     "$CC" $CFLAGS -Ipc/host -c "$f" -o "$OUT/rt/$(basename "$f" .c).o"
 done
 

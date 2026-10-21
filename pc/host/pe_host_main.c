@@ -1,10 +1,12 @@
 #define _GNU_SOURCE
 /* Host entry point: set up the PS1 address space, then run the game's main.
  *
- * Usage: parasite-eve [path/to/SLUS_006.62]   (default assets/USA/main.exe)
+ * Usage: parasite-eve [SLUS_006.62] [disc.cue]
+ *   defaults: assets/USA/main.exe, and the disc from $PE_DISC
  */
 #include "pe_host_mem.h"
 #include "pe_host_traps.h"
+#include "pe_host_disc.h"
 
 #include <signal.h>
 #include <stdio.h>
@@ -83,6 +85,7 @@ static void sn_entry(void) {
 
 int main(int argc, char **argv) {
     const char *exe = argc > 1 ? argv[1] : "assets/USA/main.exe";
+    const char *disc = argc > 2 ? argv[2] : getenv("PE_DISC");
     PeExeInfo info;
 #ifndef _WIN32
     struct sigaction sa;
@@ -99,6 +102,9 @@ int main(int argc, char **argv) {
     }
     fprintf(stderr, "pe: loaded %s: 0x%08X..0x%08X, entry 0x%08X\n", exe, info.t_addr,
             info.t_addr + info.t_size, info.pc);
+    if (!disc || pe_host_disc_open(disc) != 0) {
+        fprintf(stderr, "pe: no disc image (pass a .cue as the second argument or set PE_DISC)\n");
+    }
     install_traps();
     if (pe_host_install_jumps(pe_main_func_table, pe_main_func_count) != 0) {
         return 1;

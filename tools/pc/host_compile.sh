@@ -23,7 +23,7 @@ fi
 COMMON="$ARCH -fno-pie -fno-stack-protector -fcommon -funsigned-char -fno-strict-aliasing -fwrapv -D__PE_HOST__=1"
 "$CC" $COMMON -E -I"$SRCDIR" -I"$ROOT/pc/host/include" -I"$ROOT/include" -I"$ROOT/tools/m2c" "$@" "$IN" -o "$OUT.i"
 python3 "$ROOT/tools/pc/prep_host_sources.py" "$OUT.i" "$OUT.host.c" --report "$OUT.asm.json" || true
-"$CC" $COMMON -std=gnu11 -O1 -g -Wuninitialized -Wmaybe-uninitialized \
+"$CC" $COMMON -std=gnu11 ${PE_HOST_OPT:--O0} -g -Wuninitialized -Wmaybe-uninitialized \
     -Wno-error=implicit-function-declaration -Wno-error=int-conversion \
     -Wno-error=incompatible-pointer-types \
     -include "$ROOT/pc/host/pe_host_prelude.h" -c "$OUT.host.c" -o "$OUT" 2> "$OUT.warn" || { cat "$OUT.warn" >&2; exit 1; }
