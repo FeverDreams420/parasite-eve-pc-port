@@ -8,6 +8,7 @@
 #include "pe_host_mem.h"
 #include "pe_host_traps.h"
 #include "pe_host_disc.h"
+#include "pe_host_overlays.h"
 
 #include <signal.h>
 #include <stdio.h>
@@ -180,6 +181,7 @@ int main(int argc, char **argv) {
     }
     fprintf(stderr, "pe: %u functions mapped, %u PSY-Q entry points trapped\n",
             pe_main_func_count, pe_psyq_trap_count);
+    pe_host_overlays_init();
     sn_entry();
     pe_game_main();
     fprintf(stderr, "pe: main returned\n");

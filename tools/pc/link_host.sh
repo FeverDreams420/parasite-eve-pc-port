@@ -50,8 +50,20 @@ for f in $(grep -v '^#' pc/host/psyq_units.txt); do
     echo "$o" >> "$OUT/psyq_objs.txt"
 done
 
+# Overlays: host objects of every overlay C source, then per-overlay names.
+OVL_HOST="$HOST-ovl"
+while read -r f; do
+    o="$OVL_HOST/$f.o"
+    if [ ! -f "$o" ] || [ "$f" -nt "$o" ]; then
+        PE_TARGET="$TARGET" tools/pc/host_compile.sh "$f" "$o" >/dev/null
+    fi
+done < <(find src/overlays -name '*.c' | sort)
+python3 tools/pc/gen_overlays.py "$OUT/ovl" --host-objs "$OVL_HOST" \
+    --nm "$NM" --sym-prefix "$PREFIX"
+
 python3 tools/pc/gen_link.py "$OUT" --game-objs "$OUT/game_objs.txt" \
     --psyq-objs "$OUT/psyq_objs.txt" --shim-objs "$OUT/shim_objs.txt" \
+    --extra-refs "$OUT/ovl/overlay_global_refs.txt" \
     --nm "$NM" --sym-prefix "$PREFIX"
 
 : > "$OUT/link_objs.txt"
@@ -63,13 +75,28 @@ while read -r o; do
     echo "$d" >> "$OUT/link_objs.txt"
 done < <(cat "$OUT/game_objs.txt" "$OUT/psyq_objs.txt")
 
-for f in pc/host/pe_host_mem.c pc/host/pe_host_main.c pc/host/pe_host_disc.c pc/host/pe_host_sha1.c "$OUT/func_table.c" "$OUT/psyq_traps.c" "$OUT/psyq_stubs.c"; do
+# Per-overlay copies of the overlay objects.
+: > "$OUT/ovl_link_objs.txt"
+for rf in "$OUT"/ovl/rename_*.txt; do
+    ov="$(basename "$rf" .txt)"; ov="${ov#rename_}"
+    while read -r o; do
+        d="$OUT/ovl/objs/$ov/$(basename "$o")"
+        mkdir -p "$(dirname "$d")"
+        "$OBJCOPY" --redefine-syms="$OUT/alias_rename.txt" "$o" "$d"
+        "$OBJCOPY" --redefine-syms="$rf" "$d"
+        "$OBJCOPY" --redefine-syms="$OUT/psyq_rename.txt" "$d"
+        echo "$d" >> "$OUT/ovl_link_objs.txt"
+    done < "$OUT/ovl/objs_$ov.txt"
+done
+
+for f in pc/host/pe_host_mem.c pc/host/pe_host_main.c pc/host/pe_host_disc.c pc/host/pe_host_sha1.c pc/host/pe_host_overlays.c "$OUT/ovl/overlay_table.c" "$OUT/func_table.c" "$OUT/psyq_traps.c" "$OUT/psyq_stubs.c"; do
     "$CC" $CFLAGS -Ipc/host -c "$f" -o "$OUT/rt/$(basename "$f" .c).o"
 done
 
 "$CC" $LDFLAGS -o "$EXE" \
     $(cat "$OUT/link_objs.txt") $(cat "$OUT/shim_objs.txt") "$OUT"/rt/pe_host_*.o \
     "$OUT/rt/func_table.o" "$OUT/rt/psyq_traps.o" "$OUT/rt/psyq_stubs.o" \
-    "$OUT/abs_syms.ld" \
+    "$OUT/rt/overlay_table.o" $(cat "$OUT/ovl_link_objs.txt") \
+    "$OUT/abs_syms.ld" "$OUT/ovl/overlay_abs.ld" \
     "$PSYZ/psyz/libpsyz.a" "$PSYZ/psyz/sdl/libSDL3.a" $LIBS
 echo "linked $EXE"

@@ -22,6 +22,7 @@
 #include <ctype.h>
 
 #include "pe_host_disc.h"
+#include "pe_host_overlays.h"
 
 typedef struct {
     unsigned char minute, second, sector, track;
@@ -105,6 +106,7 @@ int pe_psyq_DsRead(DslLOC *pos, int sectors, void *buf, int mode) {
         return 0;
     }
     g_last_lba = lba + sectors;
+    pe_host_overlays_note_write((unsigned int)(uintptr_t)buf, (unsigned int)sectors * 2048u);
     return next_id();
 }
 

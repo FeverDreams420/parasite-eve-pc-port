@@ -81,6 +81,9 @@ def main():
     game_def_names = {n for _, n in game_def}
     psyq_def_names = {n for t, n in nm(psyq_objs, True) if t in 'TtWw'} if psyq_objs else set()
     guest_undef = nm(guest_objs, False) - game_def_names
+    if '--extra-refs' in sys.argv:
+        # Names the overlays leave to the main link (tools/pc/gen_overlays.py).
+        guest_undef |= set(read_list(sys.argv[sys.argv.index('--extra-refs') + 1])) - game_def_names
     host_provided = {'pe_mips_gpr', 'Psyz_GteDataRead', 'Psyz_GteDataWrite', 'Psyz_GteCtrlRead',
                      'Psyz_GteCtrlWrite', 'Psyz_GteCommand'}
 

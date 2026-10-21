@@ -1,0 +1,13 @@
+--- a/include/pe1/room_m005.h
++++ b/include/pe1/room_m005.h
+@@ -52,7 +52,9 @@
+ extern RoomM005Channel *D_800F32D0, *D_800F33E0;
+ extern RoomM005EventState *D_800E2368;
+ extern volatile u16 D_800E11E8;
+-extern volatile s16 D_800F336E, D_800F3372, D_800F3374, D_800F3370;
++extern volatile s16 D_800F336E, D_800F3372, D_800F3370;
++/* host: declared without volatile, like render_object.h, so both headers can be included */
++extern s16 D_800F3374;
+ extern volatile s16 D_800F3376, D_800F3378;
+ extern int func_800D3FD8(void);
+ extern void func_8006DF50(void *channel, int id, int value, int volume, int pan);

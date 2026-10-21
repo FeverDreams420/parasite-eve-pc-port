@@ -23,8 +23,21 @@ if [ -f "$PATCH" ]; then
     patch -s "$OUT.patched.c" < "$PATCH"
     IN="$OUT.patched.c"
 fi
+# Patched copies of headers (pc/host/patches/include/...) go first on the
+# include path.
+PINC="$ROOT/build/pc-host-include"
+for hp in $(cd "$ROOT/pc/host/patches" && find include -name '*.h.patch' 2>/dev/null); do
+    h="${hp%.patch}"
+    dst="$PINC/${h#include/}"
+    if [ ! -f "$dst" ] || [ "$ROOT/pc/host/patches/$hp" -nt "$dst" ] || [ "$ROOT/$h" -nt "$dst" ]; then
+        mkdir -p "$(dirname "$dst")"
+        cp "$ROOT/$h" "$dst.tmp.$$"
+        patch -s "$dst.tmp.$$" < "$ROOT/pc/host/patches/$hp"
+        mv "$dst.tmp.$$" "$dst"
+    fi
+done
 COMMON="$ARCH -fno-stack-protector -fcommon -funsigned-char -fno-strict-aliasing -fwrapv -D__PE_HOST__=1"
-"$CC" $COMMON -E -I"$SRCDIR" -I"$ROOT/pc/host/include" -I"$ROOT/include" -I"$ROOT/tools/m2c" "$@" "$IN" -o "$OUT.i"
+"$CC" $COMMON -E -I"$SRCDIR" -I"$PINC" -I"$ROOT/pc/host/include" -I"$ROOT/include" -I"$ROOT/tools/m2c" "$@" "$IN" -o "$OUT.i"
 python3 "$ROOT/tools/pc/prep_host_sources.py" "$OUT.i" "$OUT.host.c" --report "$OUT.asm.json" || true
 "$CC" $COMMON -std=gnu11 ${PE_HOST_OPT:--O0} -g -Wuninitialized -Wmaybe-uninitialized \
     -Wno-error=implicit-function-declaration -Wno-error=int-conversion \
