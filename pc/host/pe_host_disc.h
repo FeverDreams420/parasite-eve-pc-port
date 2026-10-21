@@ -9,5 +9,7 @@ int pe_host_disc_read(int lba, void *dst, int count);
 /* Read one raw 2352-byte sector. */
 int pe_host_disc_read_raw(int lba, void *dst);
 void pe_host_disc_shell_cycled(void);
+int pe_host_disc_find_root_file(const char *name, unsigned int *lba, unsigned int *size);
+void *pe_host_disc_load_file(const char *name, unsigned int *size_out);
 
 #endif

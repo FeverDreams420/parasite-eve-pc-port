@@ -70,3 +70,6 @@ src/main/psyq/libgte/smp_02.c
 src/main/psyq/libgte/smp_03.c
 src/main/psyq/libgte/smp_04.c
 src/main/psyq/libgpu/gpu_build.c
+src/main/psyq/libspu/s_svva.c
+src/main/psyq/libspu/s_gvex.c
+src/main/psyq/libspu/s_srmd.c

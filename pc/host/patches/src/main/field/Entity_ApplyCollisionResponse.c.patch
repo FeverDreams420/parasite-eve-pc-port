@@ -1,0 +1,12 @@
+--- a/src/main/field/Entity_ApplyCollisionResponse.c
++++ b/src/main/field/Entity_ApplyCollisionResponse.c
+@@ -159,7 +159,8 @@
+ 
+ /* Retail data at 0x8009D254; the g_PlayerEntity linker alias names this slot
+  * too. Explicit .data preserves the non-GP accesses amid small-data globals. */
+-BattleEntity *D_8009D254 __attribute__((section(".data"))) = 0;
++/* host: the variable lives at its retail address (absolute symbol) */
++extern BattleEntity *D_8009D254;
+ 
+ void Entity_ApplyCollisionResponse(struct FieldActor *player)
+ {

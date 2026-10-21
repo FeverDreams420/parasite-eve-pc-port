@@ -12,12 +12,36 @@
 #include <libgte.h>
 #include <libspu.h>
 #include <libsnd.h>
+#include <string.h>
+
+void pe_host_spu_sync(void);
 
 /* kernel: critical sections, events, root counters, callbacks */
 void pe_psyq_EnterCriticalSection(void) { PS1_EnterCriticalSection(); }
 void pe_psyq_ExitCriticalSection(void) { PS1_ExitCriticalSection(); }
 void pe_psyq_FlushCache(void) {}
+/* Handlers the game installs run through a wrapper that syncs the SPU
+ * register shadow afterwards (see spu_regs.c). */
+#define EVENT_WRAPS 16
+static long (*g_event_func[EVENT_WRAPS])();
+#define WRAP(n) static long event_wrap_##n(void) { long r = g_event_func[n](); pe_host_spu_sync(); return r; }
+WRAP(0) WRAP(1) WRAP(2) WRAP(3) WRAP(4) WRAP(5) WRAP(6) WRAP(7)
+WRAP(8) WRAP(9) WRAP(10) WRAP(11) WRAP(12) WRAP(13) WRAP(14) WRAP(15)
+static long (*const g_event_wrap[EVENT_WRAPS])() = {
+    event_wrap_0, event_wrap_1, event_wrap_2, event_wrap_3, event_wrap_4, event_wrap_5,
+    event_wrap_6, event_wrap_7, event_wrap_8, event_wrap_9, event_wrap_10, event_wrap_11,
+    event_wrap_12, event_wrap_13, event_wrap_14, event_wrap_15};
+
 long pe_psyq_OpenEvent(unsigned long desc, long spec, long mode, long (*func)()) {
+    int i;
+    if (func) {
+        for (i = 0; i < EVENT_WRAPS; i++) {
+            if (!g_event_func[i] || g_event_func[i] == func) {
+                g_event_func[i] = func;
+                return OpenEvent(desc, spec, mode, g_event_wrap[i]);
+            }
+        }
+    }
     return OpenEvent(desc, spec, mode, func);
 }
 long pe_psyq_CloseEvent(long e) { return CloseEvent(e); }
@@ -29,8 +53,21 @@ long pe_psyq_SetRCnt(long spec, unsigned short target, long mode) { return SetRC
 long pe_psyq_GetRCnt(long spec) { return GetRCnt(spec); }
 long pe_psyq_StartRCnt(long spec) { return StartRCnt(spec); }
 long pe_psyq_StopRCnt(long spec) { return StopRCnt(spec); }
-int pe_psyq_VSync(int mode) { return VSync(mode); }
-int pe_psyq_VSyncCallback(void (*f)()) { return VSyncCallback(f); }
+int pe_psyq_VSync(int mode) {
+    pe_host_spu_sync();
+    return VSync(mode);
+}
+static void (*g_vsync_func)(void);
+static void vsync_wrap(void) {
+    if (g_vsync_func) {
+        g_vsync_func();
+    }
+    pe_host_spu_sync();
+}
+int pe_psyq_VSyncCallback(void (*f)()) {
+    g_vsync_func = f;
+    return VSyncCallback(f ? vsync_wrap : NULL);
+}
 int pe_psyq_ResetCallback(void) { return ResetCallback(); }
 
 /* GPU calls without tagged structures */
@@ -53,8 +90,8 @@ long pe_psyq_VectorNormalS(VECTOR *a, SVECTOR *b) { return VectorNormalS(a, b); 
 MATRIX *pe_psyq_CompMatrix(MATRIX *a, MATRIX *b, MATRIX *c) { return CompMatrix(a, b, c); }
 
 /* SPU library (PsyZ implements it on its SPU register model) */
-void pe_psyq_SpuInit(void) { SpuInit(); }
-void pe_psyq_SpuStart(void) { SpuStart(); }
+void pe_psyq_SpuInit(void) { pe_host_spu_sync(); SpuInit(); pe_host_spu_sync(); }
+void pe_psyq_SpuStart(void) { pe_host_spu_sync(); SpuStart(); pe_host_spu_sync(); }
 void pe_psyq_SpuQuit(void) { SpuQuit(); }
 long pe_psyq_SpuInitMalloc(long num, char *top) { return SpuInitMalloc(num, top); }
 /* On hardware a DMA transfer ends with the DMA interrupt, whose handler
@@ -79,11 +116,11 @@ u_long pe_psyq_SpuWrite(u_char *addr, u_long size) {
     spu_transfer_done();
     return r;
 }
-void pe_psyq_SpuSetCommonAttr(SpuCommonAttr *a) { SpuSetCommonAttr(a); }
+void pe_psyq_SpuSetCommonAttr(SpuCommonAttr *a) { pe_host_spu_sync(); SpuSetCommonAttr(a); pe_host_spu_sync(); }
 long pe_psyq_SpuSetIRQ(long on) { return SpuSetIRQ(on); }
 SpuIRQCallbackProc pe_psyq_SpuSetIRQCallback(SpuIRQCallbackProc f) { return SpuSetIRQCallback(f); }
-long pe_psyq_SpuSetNoiseClock(long n) { return SpuSetNoiseClock(n); }
-long pe_psyq_SpuSetReverb(long on) { return SpuSetReverb(on); }
+long pe_psyq_SpuSetNoiseClock(long n) { long r; pe_host_spu_sync(); r = SpuSetNoiseClock(n); pe_host_spu_sync(); return r; }
+long pe_psyq_SpuSetReverb(long on) { long r; pe_host_spu_sync(); r = SpuSetReverb(on); pe_host_spu_sync(); return r; }
 SpuTransferCallbackProc pe_psyq_SpuSetTransferCallback(SpuTransferCallbackProc f) {
     g_spu_transfer_cb = f;
     return SpuSetTransferCallback(f);
@@ -95,3 +132,26 @@ long pe_psyq_SpuSetTransferMode(long mode) {
 unsigned long pe_psyq_SpuSetTransferStartAddr(unsigned long a) { return SpuSetTransferStartAddr(a); }
 void pe_psyq_SsInit(void) { SsInit(); }
 
+
+/* SpuSetReverbModeType (retail s_srmt.c sets the preset registers for the
+ * type, zeroes the reverb depth, and for ECHO (7) / DELAY (8) sets delay and
+ * feedback; bit 0x100 also clears the work area). Expressed through PsyZ's
+ * SpuSetReverbModeParam with the same values. */
+long pe_psyq_SpuSetReverbModeType(long mode) {
+    SpuReverbAttr a;
+    long type = mode & ~0x100;
+    if (type < 0 || type >= 10) {
+        return -1;
+    }
+    memset(&a, 0, sizeof(a));
+    a.mask = SPU_REV_MODE | SPU_REV_DEPTHL | SPU_REV_DEPTHR | SPU_REV_DELAYTIME | SPU_REV_FEEDBACK;
+    a.mode = (int)mode;
+    a.depth.left = 0;
+    a.depth.right = 0;
+    a.delay = (type == 7 || type == 8) ? 0x7F : 0;
+    a.feedback = type == 7 ? 0x7F : 0;
+    pe_host_spu_sync();
+    SpuSetReverbModeParam(&a);
+    pe_host_spu_sync();
+    return 0;
+}

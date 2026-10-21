@@ -133,3 +133,62 @@ int pe_host_disc_read(int lba, void *dst, int count) {
     }
     return 0;
 }
+
+/* ---------------------------------------------------------------- ISO 9660 */
+
+static unsigned int le32(const unsigned char *p) {
+    return p[0] | (p[1] << 8) | (p[2] << 16) | ((unsigned int)p[3] << 24);
+}
+
+/* Look up a file in the root directory by name (without ";1"). */
+int pe_host_disc_find_root_file(const char *want, unsigned int *lba, unsigned int *size) {
+    unsigned char sec[2048];
+    unsigned int dir_lba, dir_size, n, off;
+    if (pe_host_disc_read(16, sec, 1) != 0 || memcmp(sec + 1, "CD001", 5) != 0) {
+        return -1;
+    }
+    dir_lba = le32(sec + 156 + 2);
+    dir_size = le32(sec + 156 + 10);
+    for (n = 0; n < (dir_size + 2047) / 2048; n++) {
+        if (pe_host_disc_read((int)(dir_lba + n), sec, 1) != 0) {
+            return -1;
+        }
+        for (off = 0; off < 2048 && sec[off];) {
+            unsigned int nl = sec[off + 32], i;
+            char name[64];
+            if (nl >= sizeof(name)) {
+                nl = sizeof(name) - 1;
+            }
+            memcpy(name, sec + off + 33, nl);
+            name[nl] = 0;
+            for (i = 0; i < nl; i++) {
+                if (name[i] == ';') {
+                    name[i] = 0;
+                }
+            }
+            if (strcmp(name, want) == 0) {
+                *lba = le32(sec + off + 2);
+                *size = le32(sec + off + 10);
+                return 0;
+            }
+            off += sec[off];
+        }
+    }
+    return -1;
+}
+
+/* Copy a whole file from the disc into a host buffer (malloc'd). */
+void *pe_host_disc_load_file(const char *name, unsigned int *size_out) {
+    unsigned int lba, size;
+    unsigned char *buf;
+    if (pe_host_disc_find_root_file(name, &lba, &size) != 0) {
+        return NULL;
+    }
+    buf = (unsigned char *)malloc((size + 2047) & ~2047u);
+    if (!buf || pe_host_disc_read((int)lba, buf, (int)((size + 2047) / 2048)) != 0) {
+        free(buf);
+        return NULL;
+    }
+    *size_out = size;
+    return buf;
+}

@@ -1,24 +1,40 @@
 #!/usr/bin/env bash
 # Link the 32-bit host program from the compiled game objects.
-# Prerequisites: tools/pc/host_compile.sh for every game C file (build/pc-host),
-# gen_func_table.py and gen_abs_syms.py outputs, and the i686 PsyZ build
-# (build/pc-i686). Output: build/pc-link/parasite-eve
+# PE_TARGET=linux (default) -> build/pc-link/parasite-eve
+# PE_TARGET=win32           -> build/pc-link-win32/parasite-eve.exe
+# Prerequisites: tools/pc/host_compile.sh for every game C file (into
+# build/pc-host or build/pc-host-win32), build/pc-tables/* from
+# gen_func_table.py and gen_abs_syms.py, and the PsyZ build for the target
+# (build/pc-i686 or build/pc-win32).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
-OUT=build/pc-link
-CC="${PE_HOST_CC:-gcc}"
-CFLAGS="-m32 -fno-pie -fno-stack-protector -O1 -g -Wall -Wno-unused"
+TARGET="${PE_TARGET:-linux}"
+case "$TARGET" in
+    linux)
+        CC=gcc; NM=nm; OBJCOPY=objcopy; PREFIX=""
+        CFLAGS="-m32 -fno-pie -fno-stack-protector -O1 -g -Wall -Wno-unused"
+        HOST=build/pc-host; PSYQ=build/pc-psyq; OUT=build/pc-link; PSYZ=build/pc-i686
+        EXE="$OUT/parasite-eve"
+        LDFLAGS="-m32 -no-pie"
+        LIBS="-lm -lpthread -ldl" ;;
+    win32)
+        CC=i686-w64-mingw32-gcc; NM=i686-w64-mingw32-nm; OBJCOPY=i686-w64-mingw32-objcopy; PREFIX="_"
+        CFLAGS="-fno-stack-protector -O1 -g -Wall -Wno-unused"
+        HOST=build/pc-host-win32; PSYQ=build/pc-psyq-win32; OUT=build/pc-link-win32; PSYZ=build/pc-win32
+        EXE="$OUT/parasite-eve.exe"
+        LDFLAGS="-Wl,--large-address-aware,--disable-dynamicbase -static"
+        LIBS="-lm -lkernel32 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lversion -luuid -ladvapi32 -lsetupapi -lshell32 -ldinput8 -lws2_32 -lwinspool -lcomdlg32" ;;
+esac
 mkdir -p "$OUT/objs" "$OUT/rt"
 
-"$CC" $CFLAGS -c pc/host/game_asm_host.c -o build/pc-host/game_asm_host.o
-find build/pc-host/src -name '*.c.o' | sort > "$OUT/game_objs.txt"
-echo build/pc-host/game_asm_host.o >> "$OUT/game_objs.txt"
+"$CC" $CFLAGS -c pc/host/game_asm_host.c -o "$OUT/rt/game_asm_host.o"
+find "$HOST/src" -name '*.c.o' | sort > "$OUT/game_objs.txt"
+echo "$OUT/rt/game_asm_host.o" >> "$OUT/game_objs.txt"
 
 # Shims: pc/host/psyq/*.c (PSY-Q functions implemented on the host).
 : > "$OUT/shim_objs.txt"
 for f in pc/host/psyq/*.c; do
-    [ -f "$f" ] || continue
     o="$OUT/rt/shim_$(basename "$f" .c).o"
     "$CC" $CFLAGS -D__psyz -Ipc/host -Ithird_party/psyz/psyz/include -c "$f" -o "$o"
     echo "$o" >> "$OUT/shim_objs.txt"
@@ -27,33 +43,33 @@ done
 # Decomp PSY-Q units compiled for the host (pc/host/psyq_units.txt).
 : > "$OUT/psyq_objs.txt"
 for f in $(grep -v '^#' pc/host/psyq_units.txt); do
-    o="build/pc-psyq/$f.o"
+    o="$PSYQ/$f.o"
     if [ ! -f "$o" ] || [ "$f" -nt "$o" ]; then
-        tools/pc/host_compile.sh "$f" "$o" >/dev/null
+        PE_TARGET="$TARGET" tools/pc/host_compile.sh "$f" "$o" >/dev/null
     fi
     echo "$o" >> "$OUT/psyq_objs.txt"
 done
 
 python3 tools/pc/gen_link.py "$OUT" --game-objs "$OUT/game_objs.txt" \
-    --psyq-objs "$OUT/psyq_objs.txt" --shim-objs "$OUT/shim_objs.txt"
-{ cat "$OUT/psyq_rename.txt"; echo "main pe_game_main"; } > "$OUT/rename_all.txt"
+    --psyq-objs "$OUT/psyq_objs.txt" --shim-objs "$OUT/shim_objs.txt" \
+    --nm "$NM" --sym-prefix "$PREFIX"
 
 : > "$OUT/link_objs.txt"
 while read -r o; do
     d="$OUT/objs/${o#build/}"
     mkdir -p "$(dirname "$d")"
-    objcopy --redefine-syms="$OUT/alias_rename.txt" "$o" "$d"
-    objcopy --redefine-syms="$OUT/rename_all.txt" "$d"
+    "$OBJCOPY" --redefine-syms="$OUT/alias_rename.txt" "$o" "$d"
+    "$OBJCOPY" --redefine-syms="$OUT/psyq_rename.txt" "$d"
     echo "$d" >> "$OUT/link_objs.txt"
 done < <(cat "$OUT/game_objs.txt" "$OUT/psyq_objs.txt")
 
-for f in pc/host/pe_host_mem.c pc/host/pe_host_main.c pc/host/pe_host_disc.c "$OUT/func_table.c" "$OUT/psyq_traps.c" "$OUT/psyq_stubs.c"; do
+for f in pc/host/pe_host_mem.c pc/host/pe_host_main.c pc/host/pe_host_disc.c pc/host/pe_host_sha1.c "$OUT/func_table.c" "$OUT/psyq_traps.c" "$OUT/psyq_stubs.c"; do
     "$CC" $CFLAGS -Ipc/host -c "$f" -o "$OUT/rt/$(basename "$f" .c).o"
 done
 
-"$CC" -m32 -no-pie -o "$OUT/parasite-eve" \
+"$CC" $LDFLAGS -o "$EXE" \
     $(cat "$OUT/link_objs.txt") $(cat "$OUT/shim_objs.txt") "$OUT"/rt/pe_host_*.o \
     "$OUT/rt/func_table.o" "$OUT/rt/psyq_traps.o" "$OUT/rt/psyq_stubs.o" \
     "$OUT/abs_syms.ld" \
-    build/pc-i686/psyz/libpsyz.a build/pc-i686/psyz/sdl/libSDL3.a -lm -lpthread -ldl
-echo "linked $OUT/parasite-eve"
+    "$PSYZ/psyz/libpsyz.a" "$PSYZ/psyz/sdl/libSDL3.a" $LIBS
+echo "linked $EXE"

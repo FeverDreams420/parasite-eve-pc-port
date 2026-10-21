@@ -47,6 +47,10 @@ static void *map_fixed(unsigned int addr, unsigned int size, int exec) {
     return p;
 }
 
+static unsigned int rd32(const unsigned char *p) {
+    return p[0] | (p[1] << 8) | (p[2] << 16) | ((unsigned int)p[3] << 24);
+}
+
 int pe_host_map_memory(void) {
     if (sizeof(void *) != 4) {
         fprintf(stderr, "pe: this build must be 32-bit\n");
@@ -64,8 +68,29 @@ int pe_host_map_memory(void) {
     return 0;
 }
 
-static unsigned int rd32(const unsigned char *p) {
-    return p[0] | (p[1] << 8) | (p[2] << 16) | ((unsigned int)p[3] << 24);
+/* Load a PS-X EXE image that is already in memory (read from the disc). */
+int pe_host_load_exe_image(const unsigned char *img, unsigned int len, PeExeInfo *info) {
+    unsigned int t_addr, t_size;
+    if (len < 0x800 || memcmp(img, "PS-X EXE", 8) != 0) {
+        fprintf(stderr, "pe: not a PS-X EXE\n");
+        return -1;
+    }
+    t_addr = rd32(img + 0x18);
+    t_size = rd32(img + 0x1C);
+    if (t_addr < PE_RAM_BASE + 0x10000 || t_addr + t_size > PE_RAM_BASE + PE_RAM_SIZE ||
+        0x800 + t_size > len) {
+        fprintf(stderr, "pe: unexpected load range 0x%08X+0x%X\n", t_addr, t_size);
+        return -1;
+    }
+    memcpy((void *)(uintptr_t)t_addr, img + 0x800, t_size);
+    if (info) {
+        info->pc = rd32(img + 0x10);
+        info->gp = rd32(img + 0x14);
+        info->t_addr = t_addr;
+        info->t_size = t_size;
+        info->sp = rd32(img + 0x30);
+    }
+    return 0;
 }
 
 int pe_host_load_exe(const char *path, PeExeInfo *info) {
