@@ -71,14 +71,27 @@ def main():
     exclude = sys.argv[sys.argv.index('--exclude-prefix') + 1] if '--exclude-prefix' in sys.argv else None
     exe = EXE.read_bytes()
     cfg = yaml.safe_load(YAML.read_text())
-    seg = next(s for s in cfg['segments'] if isinstance(s, dict) and s.get('name') == 'main')
-    file_start, vram = seg['start'], seg['vram']
-    subalign = seg.get('subalign', cfg['options'].get('subalign', 4))
+    # Every code segment: "main" and "field_engine" (the field-engine code
+    # after the data, linked as its own segment at 0x800C1CA0).
+    segs = [s for s in cfg['segments'] if isinstance(s, dict) and s.get('type') == 'code']
     entries = []
     missing = []
+    mismatched = []
+    symtxt = {}
+    for m in re.finditer(r'^\s*(\w+)\s*=\s*(0x[0-9A-Fa-f]+)\s*;.*type:func', pathlib.Path('configs/USA/sym.main.txt').read_text(), re.M):
+        symtxt[int(m.group(2), 16)] = m.group(1)
+    for seg in segs:
+        scan_segment(seg, cfg, exe, exclude, entries, missing, mismatched, symtxt)
+    entries.sort(key=lambda e: e['addr'])
+    finish(out_c, out_json, entries, missing, mismatched)
+    return 1 if mismatched else 0
+
+
+def scan_segment(seg, cfg, exe, exclude, entries, missing, mismatched, symtxt):
+    file_start, vram = seg['start'], seg['vram']
+    subalign = seg.get('subalign', cfg['options'].get('subalign', 4))
     missing_ranges = []
     unit_starts = []
-    mismatched = []
     for sub in seg['subsegments']:
         if isinstance(sub, dict):
             off, kind, name = sub.get('start'), sub.get('type'), sub.get('name')
@@ -130,9 +143,6 @@ def main():
     # take their functions from configs/USA/sym.main.txt ("type:func"), within
     # the unit's range in main.yaml. Their code is not checked against retail.
     starts = sorted({vram + (s0 - file_start) for s0 in unit_starts})
-    symtxt = {}
-    for m in re.finditer(r'^\s*(\w+)\s*=\s*(0x[0-9A-Fa-f]+)\s*;.*type:func', pathlib.Path('configs/USA/sym.main.txt').read_text(), re.M):
-        symtxt[int(m.group(2), 16)] = m.group(1)
     known = {e['addr'] for e in entries}
     for name, a0 in missing_ranges:
         nxt = [x for x in starts if x > a0]
@@ -141,7 +151,9 @@ def main():
             if a0 <= a < a1 and a not in known:
                 entries.append({'addr': a, 'name': fn, 'unit': name, 'size': 0, 'bind': 'GLOBAL',
                                 'from_sym_txt': True})
-    entries.sort(key=lambda e: e['addr'])
+
+
+def finish(out_c, out_json, entries, missing, mismatched):
     dup = {}
     for e in entries:
         dup.setdefault(e['addr'], []).append(e['name'])
@@ -169,7 +181,6 @@ def main():
     print(json.dumps({k: (v if not isinstance(v, (list, dict)) else len(v)) for k, v in summary.items()}))
     if mismatched:
         print('MISMATCH', mismatched[:5])
-    return 1 if mismatched else 0
 
 
 if __name__ == '__main__':

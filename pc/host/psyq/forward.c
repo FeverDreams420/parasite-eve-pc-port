@@ -114,13 +114,78 @@ static void debug_frame(void) {
     }
 }
 
+/* VSync as the retail libetc does it (src/main/psyq/libetc/vsync.c):
+ * VSync(n), n >= 2, returns once n refreshes have passed since the previous
+ * VSync returned (at least the next refresh), so VSync(2) holds the game at
+ * 30 frames per second and VSync(4) - the movie player - at 15. PsyZ waits
+ * for one refresh only and runs the VBlank interrupt n times, which made
+ * everything paced by VSync(2), and everything driven by the interrupt
+ * (sound driver, timers), run at double speed.
+ * Here PsyZ's VSync(0) - show the frame, wait one refresh (driver vsync or
+ * PsyZ's frame timer), one VBlank interrupt - is repeated until n refreshes
+ * have passed by the clock (PsyZ's VSync(-1)). Refreshes the game itself used
+ * up beyond those get their VBlank interrupt too, as on hardware (at most 8
+ * at a time, so a long synchronous CD read does not cause a burst). */
+void Psyz_KernelVBlank(void);
+#ifdef _WIN32
+/* Only Sleep is needed; <windows.h> clashes with the PS1 headers. */
+__declspec(dllimport) void __stdcall Sleep(unsigned long milliseconds);
+static void sleep_1ms(void) { Sleep(1); }
+#else
+#include <time.h>
+static void sleep_1ms(void) {
+    struct timespec ts = {0, 1000000};
+    nanosleep(&ts, NULL);
+}
+#endif
+static int g_last_vblank = -1;
+
 int pe_psyq_VSync(int mode) {
-    int r;
-    pe_host_spu_sync();
-    r = VSync(mode);
-    if (mode == 0 || mode > 1) {
-        debug_frame();
+    int r, now, steps = 0, extra;
+    if (mode < 0 || mode == 1) {
+        return VSync(mode);
     }
+    if (g_last_vblank < 0) {
+        g_last_vblank = VSync(-1);
+    }
+    pe_host_spu_sync();
+    do {
+        r = VSync(0);
+        steps++;
+        now = VSync(-1);
+    } while (mode >= 2 && now - g_last_vblank < mode && steps < mode);
+    /* Safety net where PsyZ's step does not really wait (no display, e.g.
+     * the offscreen test driver): never return more than one refresh early. */
+    while (mode >= 2 && now - g_last_vblank < mode - 1) {
+        sleep_1ms();
+        now = VSync(-1);
+    }
+    extra = now - g_last_vblank - steps;
+    if (extra > 8) {
+        extra = 8;
+    }
+    for (; extra > 0; extra--) {
+        Psyz_KernelVBlank();
+    }
+    if (getenv("PE_LOG_VSYNC")) {
+        /* every 300 calls: how often each mode was used and refreshes per call */
+        static unsigned calls, by_mode[4], vblanks;
+        static int start = -1;
+        if (start < 0) {
+            start = g_last_vblank;
+        }
+        calls++;
+        by_mode[mode < 3 ? mode : 3]++;
+        if (calls % 300 == 0) {
+            vblanks = (unsigned)(now - start);
+            fprintf(stderr, "pe: vsync: %u calls (mode 0: %u, 2: %u, >2: %u), %.2f refreshes per call\n",
+                    calls, by_mode[0], by_mode[2], by_mode[3], (double)vblanks / 300.0);
+            start = now;
+            memset(by_mode, 0, sizeof(by_mode));
+        }
+    }
+    g_last_vblank = now;
+    debug_frame();
     return r;
 }
 static void (*g_vsync_func)(void);
@@ -201,7 +266,20 @@ DISPENV *pe_psyq_PutDispEnv(DISPENV *env) {
 }
 
 /* SPU library (PsyZ implements it on its SPU register model) */
-void pe_psyq_SpuInit(void) { pe_host_spu_sync(); SpuInit(); pe_host_spu_sync(); }
+/* PsyZ opens the audio device (Psyz_AudioInit) only from its own libcd,
+ * when CD audio is switched on; this port replaces libcd/libds with its own
+ * disc reader, so without this the device was never opened and nothing was
+ * heard. It is opened before the SPU is initialised (Psyz_AudioInit also
+ * resets PsyZ's SPU). */
+int Psyz_AudioInit(void);
+void pe_psyq_SpuInit(void) {
+    if (Psyz_AudioInit() != 0) {
+        fprintf(stderr, "pe: could not open the audio device; no sound\n");
+    }
+    pe_host_spu_sync();
+    SpuInit();
+    pe_host_spu_sync();
+}
 void pe_psyq_SpuStart(void) { pe_host_spu_sync(); SpuStart(); pe_host_spu_sync(); }
 void pe_psyq_SpuQuit(void) { SpuQuit(); }
 long pe_psyq_SpuInitMalloc(long num, char *top) { return SpuInitMalloc(num, top); }

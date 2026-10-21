@@ -44,7 +44,64 @@ static void reload(void) {
     g_ready = 1;
 }
 
+/* Debug: PE_LOG_SPU=1 prints, every 300 frames, the key-ons seen since the
+ * last report, SPUCNT, main/reverb/CD volumes, and the voices whose
+ * envelope (register +0xC) is not zero, with pitch and volume. */
+#include <stdio.h>
+#include <stdlib.h>
+unsigned int pe_host_frame_number(void);
+static unsigned int g_keyons, g_log_frame;
+
+static void spu_log(void) {
+    volatile unsigned short *s = shadow();
+    unsigned int f = pe_host_frame_number(), v;
+    if (f < g_log_frame + 300) {
+        return;
+    }
+    g_log_frame = f;
+    fprintf(stderr, "pe: spu frame %u: key-ons %u, SPUCNT %04X, main vol %04X/%04X, reverb vol %04X/%04X, "
+                    "CD vol %04X/%04X, reverb on %04X%04X\n",
+            f, g_keyons, s[0x1AA / 2], s[0x180 / 2], s[0x182 / 2], s[0x184 / 2], s[0x186 / 2], s[0x1B0 / 2],
+            s[0x1B2 / 2], s[0x19A / 2], s[0x198 / 2]);
+    {
+        unsigned char *Psyz_SpuGetRam(void);
+        unsigned char *ram = Psyz_SpuGetRam();
+        unsigned int base = (unsigned int)s[0x1A2 / 2] << 3, a, nz = 0;
+        for (a = base; a < 0x80000; a++) {
+            nz += ram[a] != 0;
+        }
+        fprintf(stderr, "pe:   reverb work area 0x%05X..0x7FFFF (%u bytes), %u non-zero; first bytes:", base,
+                0x80000 - base, nz);
+        for (a = base; a < base + 16 && a < 0x80000; a++) {
+            fprintf(stderr, " %02X", ram[a]);
+        }
+        fprintf(stderr, "\n");
+    }
+    for (v = 0; v < 24; v++) {
+        volatile unsigned short *r = s + v * 8;
+        if (r[6]) {
+            fprintf(stderr, "pe:   voice %u: vol %04X/%04X pitch %04X start %04X env %04X\n", v, r[0], r[1], r[2],
+                    r[3], r[6]);
+        }
+    }
+    g_keyons = 0;
+}
+
+/* The audio thread mixes from PsyZ's SPU state while the game thread
+ * changes it here; PsyZ's audio lock (an SDL mutex, which SDL documents as
+ * recursive) keeps a mix from seeing half-applied register changes. */
+void Psyz_AudioLock(void);
+void Psyz_AudioUnlock(void);
+
+static void spu_sync_locked(void);
+
 void pe_host_spu_sync(void) {
+    Psyz_AudioLock();
+    spu_sync_locked();
+    Psyz_AudioUnlock();
+}
+
+static void spu_sync_locked(void) {
     volatile unsigned short *s = shadow();
     unsigned int i;
     if (!g_ready) {
@@ -55,7 +112,16 @@ void pe_host_spu_sync(void) {
         unsigned short v = s[i];
         if (v != g_synced[i]) {
             Psyz_SpuWrite(i * 2, v);
+            if (i * 2 == 0x188 || i * 2 == 0x18A) {
+                unsigned short b;
+                for (b = v; b; b &= (unsigned short)(b - 1)) {
+                    g_keyons++;
+                }
+            }
         }
     }
     reload();
+    if (getenv("PE_LOG_SPU")) {
+        spu_log();
+    }
 }

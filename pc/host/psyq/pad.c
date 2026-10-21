@@ -22,13 +22,15 @@ static unsigned char *g_pad_buf[2];
 static PsyzVSyncCb g_prev_cb;
 
 /* Debug: PE_PAD_SCRIPT="frame:mask,frame:mask,..." holds buttons on port 1
- * for 6 frames from each frame number (frames counted here, one per VBlank).
+ * for 6 frames from each frame number (game frames: VSync calls, the same
+ * numbering as PE_CAPTURE_DIR frame files).
  * mask uses the controller's button bits: low byte = byte 2 (Select 0x01,
  * L3 0x02, R3 0x04, Start 0x08, Up 0x10, Right 0x20, Down 0x40, Left 0x80),
  * high byte = byte 3 (L2 0x100, R2 0x200, L1 0x400, R1 0x800, Triangle
  * 0x1000, Circle 0x2000, Cross 0x4000, Square 0x8000). */
 #include <stdio.h>
 #include <stdlib.h>
+unsigned int pe_host_frame_number(void);
 static unsigned int g_pad_frame;
 static unsigned int script_mask(unsigned int frame) {
     static const char *script;
@@ -61,9 +63,8 @@ static void pad_vsync(void) {
             Psyz_PadsGet(i, (char *)g_pad_buf[i], PAD_BUF_LEN);
         }
     }
-    g_pad_frame++;
-    if (getenv("PE_LOG_PAD") && g_pad_buf[0] && (g_pad_frame % 300 == 0 || script_mask(g_pad_frame - 1) ||
-                                                 script_mask(g_pad_frame - 8))) {
+    g_pad_frame = pe_host_frame_number();
+    if (getenv("PE_LOG_PAD") && g_pad_buf[0] && script_mask(g_pad_frame)) {
         fprintf(stderr, "pe: pad frame %u: %02X %02X %02X %02X  game buttons 0x%08X\n", g_pad_frame,
                 g_pad_buf[0][0], g_pad_buf[0][1], g_pad_buf[0][2], g_pad_buf[0][3],
                 *(volatile unsigned int *)0x8009D26Cu);

@@ -1,0 +1,32 @@
+diff --git a/psyz/src/psyz/psyz_spu.c b/psyz/src/psyz/psyz_spu.c
+index 74927f1..d8b52b8 100644
+--- a/psyz/src/psyz/psyz_spu.c
++++ b/psyz/src/psyz/psyz_spu.c
+@@ -197,13 +197,21 @@ static inline int voice_vol(unsigned short reg) {
+ 
+ static inline int spu_s16(u16 value) { return (short)value; }
+ 
++// psx-spx: "All memory addresses are relative to the current BufferAddress,
++// and wrapped within ESA..7FFFEh when exceeding that region." The previous
++// code wrapped at the end of the whole RAM, so with a small work area (Parasite
++// Eve uses 16 bytes at 7FFF0h) reads landed in unrelated sound RAM and the
++// reverb output, which still plays when reverb is disabled, was a steady tone.
+ static unsigned reverb_address(u16 raw_offset, int extra_bytes) {
+-    unsigned base = ((unsigned)_spu_RXX->rxx.rev_work_addr << 3) & 0x7FFFF;
+-    unsigned addr = spu.reverb_cur + ((unsigned)raw_offset << 3) + extra_bytes;
+-    addr &= 0x7FFFF;
+-    if (addr < base)
+-        addr = base + addr;
+-    return addr & 0x7FFFF;
++    unsigned base = ((unsigned)_spu_RXX->rxx.rev_work_addr << 3) & 0x7FFFE;
++    long size = 0x80000L - (long)base;
++    long rel = (long)spu.reverb_cur - (long)base + ((long)raw_offset << 3) + extra_bytes;
++    if (size <= 0)
++        return base;
++    rel %= size;
++    if (rel < 0)
++        rel += size;
++    return (base + (unsigned)rel) & 0x7FFFE;
+ }
+ 
+ static short reverb_read(u16 offset, int extra_bytes) {
