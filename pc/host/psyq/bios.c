@@ -44,3 +44,7 @@ int pe_psyq_rand(void) {
     return (int)((g_rand_seed >> 16) & 0x7FFF);
 }
 void pe_psyq_srand(unsigned int seed) { g_rand_seed = seed; }
+
+/* libpress streaming ring (movies): not used until movie playback exists. */
+void StUnSetRing(void); /* PsyZ */
+void pe_psyq_StUnSetRing(void) { StUnSetRing(); }

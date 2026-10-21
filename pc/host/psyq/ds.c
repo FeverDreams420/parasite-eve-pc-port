@@ -218,3 +218,24 @@ DslFILE *pe_psyq_DsSearchFile(DslFILE *fp, char *path) {
         dir_size = size;
     }
 }
+
+/* Direct CD control (used by the movie player in boot_display and
+ * menu_memcard). Streaming playback is not implemented yet: commands are
+ * accepted and report success so callers do not wait forever. */
+static void *g_ready_cb;
+int pe_psyq_DsControl(unsigned char com, unsigned char *param, unsigned char *result) {
+    (void)param;
+    if (getenv("PE_LOG_CD")) {
+        fprintf(stderr, "pe: DsControl 0x%02X (not implemented)\n", com);
+    }
+    set_result(result);
+    return 1;
+}
+int pe_psyq_DsControlB(unsigned char com, unsigned char *param, unsigned char *result) {
+    return pe_psyq_DsControl(com, param, result);
+}
+void *pe_psyq_DsReadyCallback(void *cb) {
+    void *old = g_ready_cb;
+    g_ready_cb = cb;
+    return old;
+}

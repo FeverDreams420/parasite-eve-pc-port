@@ -155,3 +155,8 @@ long pe_psyq_SpuSetReverbModeType(long mode) {
     pe_host_spu_sync();
     return 0;
 }
+
+/* mtx_006 (PushMatrix/PopMatrix) is hand-written MIPS in the decomp; PsyZ
+ * keeps the same matrix stack semantics. */
+void pe_psyq_PushMatrix(void) { PushMatrix(); }
+void pe_psyq_PopMatrix(void) { PopMatrix(); }
