@@ -9,5 +9,8 @@ typedef struct {
 
 extern const PeHostFunc pe_main_func_table[];
 extern const unsigned int pe_main_func_count;
+/* tools/pc/gen_data_code.py: code the decomp keeps as data words */
+extern const PeHostFunc pe_data_code_table[];
+extern const unsigned int pe_data_code_count;
 
 #endif

@@ -1,0 +1,49 @@
+--- a/src/overlays/menu_memcard/Memcard_UpdateFadeCounter_8012B53C.c
++++ b/src/overlays/menu_memcard/Memcard_UpdateFadeCounter_8012B53C.c
+@@ -1,26 +1,31 @@
+ #include "menu_memcard_fade.h"
+ 
++/* Host version, read off the retail instructions at the address the game
++ * runs this from (0x80192FE8; see pc/PROGRESS.md "Title screen"). The
++ * retail `j 0x80193024` is the join of the if/else below; the decomp links
++ * this piece 0x4C lower, where that address is the epilogue, so its C
++ * returned early and never advanced the fade. */
+ s32 func_8012B53C(MenuMemcardFadeState *state) {
+     s32 shifted;
+-    s32 result;
++    s32 step;
++    void (*onStep)(MenuMemcardFadeState *);
+ 
+     state->displayTop = state->velocity + state->increment;
+     shifted = state->increment << 4;
+-    if (shifted >= 0) {
+-        result = 0x100 - shifted;
++    if (shifted < 0) {
++        state->level = shifted + 0x100;
+     } else {
+-        {
+-            s32 nextLevel = shifted + 0x100;
+-            asm volatile("" : : "r"(nextLevel));
+-            state->level = nextLevel;
+-        }
+-        state->increment += (state->increment != 0);
+-        if (state->onStep != 0 && state->increment == state->callbackAt) {
+-            state->onStep(state);
+-        }
+-        if (state->increment < 16) return 1;
++        state->level = 0x100 - shifted;
++    }
++    step = state->increment;
++    onStep = state->onStep;
++    step += (step != 0);
++    state->increment = step;
++    if (onStep != 0 && step == state->callbackAt) {
++        onStep(state);
++    }
++    if (state->increment >= 16) {
+         state->finished = 1;
+-        result = 1;
+     }
+-    return result;
++    return 1;
+ }

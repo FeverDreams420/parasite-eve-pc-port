@@ -1,0 +1,5 @@
+# Main-executable code the decomp keeps as data words (asm/USA/main/data/main/
+# dtail_0D0860.data.s: dlabel func_800E0060, func_800E00CC, func_800E01BC and
+# the routines they call, up to the data at D_800E0808).
+# start      end (exclusive)
+0x800E0060   0x800E0808

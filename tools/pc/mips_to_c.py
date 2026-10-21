@@ -354,7 +354,7 @@ def translate_body(name, body, syms, group):
     return out, warnings
 
 
-def translate_group(tag, funcs):
+def translate_group(tag, funcs, stack_args=0):
     """Translate the routines of one source file together.
 
     funcs: list of (name, body). Returns (c_source, warnings). Each routine
@@ -374,19 +374,24 @@ def translate_group(tag, funcs):
                    for x in sorted(syms - names))
     for x in sorted(syms & names):
         decl += '#define pe_asmref_%s ((char *)%s)\n' % (x, x)
-    proto = ''.join('uint32_t %s(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3);\n' % n for n, _ in funcs)
+    # stack_args > 0: the wrappers also take that many further arguments and
+    # store them where the MIPS calling convention puts them (16 bytes above
+    # the caller's $sp, after the four argument-register home slots).
+    extra = ''.join(', uint32_t a%d' % (4 + k) for k in range(stack_args))
+    store = ''.join(' pe_stack[%d] = a%d;' % (244 + k, 4 + k) for k in range(stack_args))
+    proto = ''.join('uint32_t %s(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3%s);\n' % (n, extra) for n, _ in funcs)
     sw = ' '.join('case %d: goto E_%d;' % (k, k) for k in range(len(funcs)))
     grp = ('static void pe_asmgroup(int entry, uint32_t *r) {\n'
            '    switch (entry) { %s default: return; }\n    %s\n}\n') % (sw, '\n    '.join(parts))
     wrap = ''.join(
-        'uint32_t %s(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3) {\n'
+        'uint32_t %s(uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3%s) {\n'
         '    uint32_t r[34] = {0};\n'
-        '    uint32_t pe_stack[256];\n'
-        '    r[4] = a0; r[5] = a1; r[6] = a2; r[7] = a3;\n'
+        '    uint32_t pe_stack[%d];\n'
+        '    r[4] = a0; r[5] = a1; r[6] = a2; r[7] = a3;%s\n'
         '    r[29] = (uint32_t)(uintptr_t)&pe_stack[240];\n'
         '    pe_asmgroup(%d, r);\n'
         '    return r[2];\n'
-        '}\n' % (n, k) for k, (n, _) in enumerate(funcs))
+        '}\n' % (n, extra, 256 + stack_args, store, k) for k, (n, _) in enumerate(funcs))
     src = proto + decl + grp.replace('pe_asmgroup', 'pe_asmgroup_' + tag) + wrap.replace('pe_asmgroup', 'pe_asmgroup_' + tag)
     return src, warns
 

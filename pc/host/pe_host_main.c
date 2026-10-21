@@ -182,11 +182,12 @@ int main(int argc, char **argv) {
     fprintf(stderr, "pe: loaded %s: 0x%08X..0x%08X, entry 0x%08X\n", exe, info.t_addr,
             info.t_addr + info.t_size, info.pc);
     install_traps();
-    if (pe_host_install_jumps(pe_main_func_table, pe_main_func_count) != 0) {
+    if (pe_host_install_jumps(pe_main_func_table, pe_main_func_count) != 0 ||
+        pe_host_install_jumps(pe_data_code_table, pe_data_code_count) != 0) {
         return 1;
     }
-    fprintf(stderr, "pe: %u functions mapped, %u PSY-Q entry points trapped\n",
-            pe_main_func_count, pe_psyq_trap_count);
+    fprintf(stderr, "pe: %u functions mapped (%u of them kept as data by the decomp), %u PSY-Q entry points trapped\n",
+            pe_main_func_count + pe_data_code_count, pe_data_code_count, pe_psyq_trap_count);
     pe_host_overlays_init();
     sn_entry();
     pe_game_main();

@@ -1,0 +1,16 @@
+--- a/src/main/menu/MenuInputFlow.c
++++ b/src/main/menu/MenuInputFlow.c
+@@ -219,7 +219,12 @@
+ 
+     node = MenuWidget_GetCurrentNode();
+     if (D_8009D0EC == 0) {
+-        MenuInput_EnqueueStatusChanges(node->flags);
++        /* Host: with no menu open the node is NULL and the retail code
++         * (lw a0,40(s0)) reads PS1 address 0x28, kernel RAM that psx-spx
++         * lists as unused/reserved; its value is not documented. The host
++         * cannot map page 0, so 0 is passed. It only feeds the key-repeat
++         * test `flags != 0 && timer < -0x5A` below. */
++        MenuInput_EnqueueStatusChanges(node != 0 ? node->flags : 0);
+     }
+ 
+     localp = &local;
