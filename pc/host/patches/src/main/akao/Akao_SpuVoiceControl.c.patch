@@ -1,0 +1,31 @@
+--- a/src/main/akao/Akao_SpuVoiceControl.c
++++ b/src/main/akao/Akao_SpuVoiceControl.c
+@@ -8,19 +8,24 @@
+ extern volatile u16 D_1F801D88;
+ extern volatile u16 D_1F801D8A;
+ 
++/* Host: key-on/key-off go to the SPU right away, after any pending register
++ * writes (pc/host/psyq/spu_regs.c), instead of through the register shadow,
++ * where a second write before the next sync replaced the first. */
++void pe_host_spu_key(unsigned int reg, unsigned short value);
++
+ void Spu_WriteKeyOn(u32 value) {
+-    D_1F801D88 = value;
++    pe_host_spu_key(0x188, (u16)value);
+     value >>= 16;
+-    D_1F801D8A = value;
++    pe_host_spu_key(0x18A, (u16)value);
+ }
+ 
+ extern volatile u16 D_1F801D8C;
+ extern volatile u16 D_1F801D8E;
+ 
+ void Spu_WriteKeyOff(u32 value) {
+-    D_1F801D8C = value;
++    pe_host_spu_key(0x18C, (u16)value);
+     value >>= 16;
+-    D_1F801D8E = value;
++    pe_host_spu_key(0x18E, (u16)value);
+ }
+ 
+ extern volatile u16 D_1F801D98;

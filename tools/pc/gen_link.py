@@ -110,7 +110,9 @@ def main():
     # Every PSY-Q function a guest object defines is renamed too.
     psyq_used |= psyq_def_names & psyq_all
     for s in sorted(guest_undef):
-        if s in host_provided:
+        # Host functions that host patches of game code call (pe_host_*) are
+        # the port's own, not PSY-Q names.
+        if s in host_provided or s.startswith('pe_host_'):
             continue
         if s in psyq_all:
             psyq_used.add(s)

@@ -9,6 +9,11 @@
  * PsyZ so register reads (envelope, status, ENDX) return live values.
  * Key on/off (0x188..0x18F) are write-only triggers: they are cleared in the
  * shadow after each sync so the same value written again is seen again.
+ * The sound driver's own key-on/key-off writes (Spu_WriteKeyOn/Off) do not
+ * go through the shadow: pe_host_spu_key() first forwards every pending
+ * register change, then the trigger, so each one reaches the SPU in the
+ * game's order and a second key-off before the next sync cannot replace
+ * the first (which left a voice playing until it was reused).
  *
  * Sync points: after every root-counter/VBlank handler the game installed
  * (the sound driver runs from the 240 Hz counter 2 event), at VSync, and
@@ -94,6 +99,7 @@ void Psyz_AudioLock(void);
 void Psyz_AudioUnlock(void);
 
 static void spu_sync_locked(void);
+static void key_watchdog(void);
 
 void pe_host_spu_sync(void) {
     Psyz_AudioLock();
@@ -121,7 +127,60 @@ static void spu_sync_locked(void) {
         }
     }
     reload();
+    key_watchdog();
     if (getenv("PE_LOG_SPU")) {
         spu_log();
     }
+}
+
+/* Spu_WriteKeyOn/Off (host patch of src/main/akao/Akao_SpuVoiceControl.c):
+ * reg 0x188/0x18A key on, 0x18C/0x18E key off. */
+/* Watchdog for sounds that never end: a voice still sounding 10 s after its
+ * key-on (and not keyed off since) is reported once in the log, with its
+ * addresses, to find looping effect sounds. Long music notes can show up too.
+ * Pitch-0 voices (held silent by the driver) are not reported. */
+unsigned int pe_host_frame_number(void);
+static unsigned int g_key_frame[24];
+static unsigned char g_key_live[24], g_key_reported[24];
+static void key_note(unsigned int reg, unsigned short value) {
+    unsigned int base = (reg == 0x18A || reg == 0x18E) ? 16 : 0, v;
+    for (v = 0; v < 16 && base + v < 24; v++) {
+        if (!(value & (1u << v))) {
+            continue;
+        }
+        if (reg == 0x188 || reg == 0x18A) {
+            g_key_frame[base + v] = pe_host_frame_number();
+            g_key_live[base + v] = 1;
+            g_key_reported[base + v] = 0;
+        } else {
+            g_key_live[base + v] = 0;
+        }
+    }
+}
+static void key_watchdog(void) {
+    volatile unsigned short *s = shadow();
+    unsigned int now = pe_host_frame_number(), v;
+    for (v = 0; v < 24; v++) {
+        volatile unsigned short *r = s + v * 8;
+        if (g_key_live[v] && !g_key_reported[v] && r[6] != 0 && r[2] != 0 && now - g_key_frame[v] > 600) {
+            g_key_reported[v] = 1;
+            fprintf(stderr, "pe: sound watchdog: voice %u still playing %u frames after key-on "
+                            "(start %05X, loop %05X, pitch %04X, envelope %04X), no key-off\n",
+                    v, now - g_key_frame[v], (unsigned)r[3] << 3, (unsigned)r[7] << 3, r[2], r[6]);
+        }
+    }
+}
+
+void pe_host_spu_key(unsigned int reg, unsigned short value) {
+    Psyz_AudioLock();
+    spu_sync_locked();
+    Psyz_SpuWrite(reg, value);
+    key_note(reg, value);
+    if (reg == 0x188 || reg == 0x18A) {
+        unsigned short b;
+        for (b = value; b; b &= (unsigned short)(b - 1)) {
+            g_keyons++;
+        }
+    }
+    Psyz_AudioUnlock();
 }

@@ -1,0 +1,21 @@
+--- a/src/overlays/room_lib/RoomEffect_GlowOrbSetup.c
++++ b/src/overlays/room_lib/RoomEffect_GlowOrbSetup.c
+@@ -5,10 +5,16 @@
+  * glow orb (RoomEffect_GlowOrb.c); the data is each room's own
+  * (pe1/room_glow_orb.h).
+  */
++/* Host: hide the header's no-argument declaration of RoomEffect_GlowOrbSetup, which is
++ * redefined below to take the object (see the note there). */
++#define RoomEffect_GlowOrbSetup RoomEffect_GlowOrbSetup__host_hidden_decl
+ #include "pe1/room_glow_orb.h"
++#undef RoomEffect_GlowOrbSetup
+ 
+-int RoomEffect_GlowOrbSetup(void) {
+-    *FieldEng_GetSlot() = g_RoomGlowOrbScript;
++/* Host: the retail jal to FieldEng_GetSlot has a0 = this method's own
++ * argument, the object, which FieldEng_GetSlot clears and sets up. */
++int RoomEffect_GlowOrbSetup(void *o) {
++    *((void **(*)(void *))FieldEng_GetSlot)(o) = g_RoomGlowOrbScript;
+     g_RoomGlowOrbSprite.code = 0x20;
+     g_RoomGlowOrbSprite.mode = 3;
+     g_RoomGlowOrbFlashSprite.code = 0x2B;

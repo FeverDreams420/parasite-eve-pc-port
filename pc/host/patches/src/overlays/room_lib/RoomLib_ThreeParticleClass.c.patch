@@ -1,0 +1,27 @@
+--- a/src/overlays/room_lib/RoomLib_ThreeParticleClass.c
++++ b/src/overlays/room_lib/RoomLib_ThreeParticleClass.c
+@@ -11,9 +11,24 @@
+  * link the class; the script and the lists are each room's own data
+  * (pe1/room_three_particle_class.h).
+  */
++/* Host: hide the header's no-argument declaration of RoomLib_ThreeParticlePlantScript, which is
++ * redefined below to take the object (see the note there). */
++#define RoomLib_ThreeParticlePlantScript RoomLib_ThreeParticlePlantScript__host_hidden_decl
+ #include "room_lib.h"
+ #include "pe1/room_three_particle_class.h"
++#undef RoomLib_ThreeParticlePlantScript
+ 
++/* Host: the retail code calls FieldEng_GetSlot with a0 still holding this
++ * method's own argument, the object (Pm_AllocSlot calls the initialize
++ * method with the slot entry), and FieldEng_GetSlot(object) clears and sets
++ * up that object. The shared macro calls it with no argument, so on x86 it
++ * worked on a stack value. Redefined here to pass the object. */
++#undef ROOMLIB_PLANT_TABLE
++#define ROOMLIB_PLANT_TABLE(name, table) \
++    int name(void *o) { \
++        *((void **(*)(void *))FieldEng_GetSlot)(o) = table; \
++        return 0; \
++    }
+ ROOMLIB_PLANT_TABLE(RoomLib_ThreeParticlePlantScript, g_RoomThreeParticleScript)
+ 
+ ROOMLIB_SPAWN6(RoomLib_ThreeParticleSpawn6)

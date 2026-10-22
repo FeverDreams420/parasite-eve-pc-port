@@ -1,0 +1,29 @@
+--- a/src/overlays/room_lib/RoomEffect_GroundEruptionClass.c
++++ b/src/overlays/room_lib/RoomEffect_GroundEruptionClass.c
+@@ -10,11 +10,26 @@
+  * which uses the shared class methods. The script and the lists are each
+  * overlay's own data (pe1/room_ground_eruption.h).
+  */
++/* Host: hide the header's no-argument declaration of RoomEffect_GroundEruptionPlantScript, which is
++ * redefined below to take the object (see the note there). */
++#define RoomEffect_GroundEruptionPlantScript RoomEffect_GroundEruptionPlantScript__host_hidden_decl
+ #include "room_lib.h"
+ #include "pe1/room_ground_eruption.h"
++#undef RoomEffect_GroundEruptionPlantScript
+ 
+ ROOMLIB_RETURN_ZERO(RoomEffect_GroundEruptionNop0)
+ 
++/* Host: the retail code calls FieldEng_GetSlot with a0 still holding this
++ * method's own argument, the object (Pm_AllocSlot calls the initialize
++ * method with the slot entry), and FieldEng_GetSlot(object) clears and sets
++ * up that object. The shared macro calls it with no argument, so on x86 it
++ * worked on a stack value. Redefined here to pass the object. */
++#undef ROOMLIB_PLANT_TABLE
++#define ROOMLIB_PLANT_TABLE(name, table) \
++    int name(void *o) { \
++        *((void **(*)(void *))FieldEng_GetSlot)(o) = table; \
++        return 0; \
++    }
+ ROOMLIB_PLANT_TABLE(RoomEffect_GroundEruptionPlantScript, g_RoomEruptionScript)
+ 
+ ROOMLIB_SPAWN6(RoomEffect_GroundEruptionSpawn6)

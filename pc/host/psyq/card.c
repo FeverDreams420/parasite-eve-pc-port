@@ -3,8 +3,10 @@
  * saves work as they are.
  *
  * Card files: $PE_CARD1 / $PE_CARD2, default memcards/card1.mcd and
- * memcards/card2.mcd next to the working directory. A missing file is a
- * missing card. A card is written back to its file after every change.
+ * memcards/card2.mcd next to the working directory. If card 1's file is
+ * missing, a blank formatted card is inserted (written to the file at the
+ * first save); a missing card 2 file is a missing card. A card is written
+ * back to its file after every change.
  *
  * Layout (psx-spx, "Memory Card Data Format"): 16 blocks of 8 KiB, 128-byte
  * frames. Block 0 frame 0 holds "MC"; frames 1-15 are the directory entries
@@ -89,6 +91,8 @@ static void card_path(int port, char *out, size_t n) {
     }
 }
 
+static void format_card(int port);
+
 static void load_cards(void) {
     int p;
     if (g_loaded) {
@@ -106,6 +110,13 @@ static void load_cards(void) {
             if (!g_card[p].present) {
                 fprintf(stderr, "pe: %s is not a 128 KiB card image, ignored\n", g_card[p].path);
             }
+        }
+        if (!f && p == 0) {
+            format_card(0);
+            g_card[0].present = 1;
+            fprintf(stderr, "pe: memory card 1: %s not found, a blank formatted card is inserted "
+                            "(saved there on the first write)\n", g_card[0].path);
+            continue;
         }
         fprintf(stderr, "pe: memory card %d: %s%s\n", p + 1, g_card[p].path,
                 g_card[p].present ? "" : " (not present)");

@@ -1,0 +1,13 @@
+--- a/src/overlays/room_m273_liberty/func_80192E64.c
++++ b/src/overlays/room_m273_liberty/func_80192E64.c
+@@ -28,7 +28,9 @@
+         break;
+     }
+     case 3:
+-        *(s32 *)arg4 = func_80193114(*(s32 *)arg3);
++        /* Host: retail a1 = fields (base + 0xC, the $5 register set at the
++         * top), which func_80193114(arg0, arg1) reads. */
++        *(s32 *)arg4 = ((int (*)(int, void *))func_80193114)(*(s32 *)arg3, fields);
+         break;
+     case 4:
+         *(s32 *)fields = arg3;

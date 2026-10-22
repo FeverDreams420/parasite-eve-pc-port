@@ -1,0 +1,16 @@
+--- a/psyz/src/psyz/spu_voice.h
++++ b/psyz/src/psyz/spu_voice.h
+@@ -135,6 +135,13 @@
+         // end of block, and handle loop/end flags
+         if (!vs->needs_decode && (vs->block_flags & 0x01)) {
+             if (!(vs->block_flags & 0x02)) {
++                // psx-spx, ADPCM flags: Loop End with Loop Repeat = 0 jumps to
++                // the loop address, forces release and sets the ADSR level to
++                // zero. Games read that level to see that the voice is free
++                // (PE's sound driver frees a voice when it reads 0).
++                vs->cur_addr = vs->repeat_addr;
++                vs->env_vol = 0;
++                vs->env_state = ADSR_OFF;
+                 vs->active = 0;
+                 vs->gwin[vs->gpos] = 0;
+                 vs->gpos = (vs->gpos + 1) & 3;

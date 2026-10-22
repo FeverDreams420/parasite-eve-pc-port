@@ -1,0 +1,29 @@
+--- a/src/overlays/room_lib/RoomFx_DropFieldClass.c
++++ b/src/overlays/room_lib/RoomFx_DropFieldClass.c
+@@ -9,11 +9,26 @@
+  * link it after the glow orb's class. The script and the lists are each
+  * room's own data (pe1/room_drop_field_class.h).
+  */
++/* Host: hide the header's no-argument declaration of RoomFx_DropFieldPlantScript, which is
++ * redefined below to take the object (see the note there). */
++#define RoomFx_DropFieldPlantScript RoomFx_DropFieldPlantScript__host_hidden_decl
+ #include "room_lib.h"
+ #include "pe1/room_drop_field_class.h"
++#undef RoomFx_DropFieldPlantScript
+ 
+ ROOMLIB_RETURN_ZERO(RoomFx_DropFieldNop0)
+ 
++/* Host: the retail code calls FieldEng_GetSlot with a0 still holding this
++ * method's own argument, the object (Pm_AllocSlot calls the initialize
++ * method with the slot entry), and FieldEng_GetSlot(object) clears and sets
++ * up that object. The shared macro calls it with no argument, so on x86 it
++ * worked on a stack value. Redefined here to pass the object. */
++#undef ROOMLIB_PLANT_TABLE
++#define ROOMLIB_PLANT_TABLE(name, table) \
++    int name(void *o) { \
++        *((void **(*)(void *))FieldEng_GetSlot)(o) = table; \
++        return 0; \
++    }
+ ROOMLIB_PLANT_TABLE(RoomFx_DropFieldPlantScript, g_RoomDropFieldScript)
+ 
+ ROOMLIB_SPAWN6(RoomFx_DropFieldSpawn6)
