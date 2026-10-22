@@ -18,9 +18,12 @@
  *        picture and video memory (snapshot-NNNNN-frame.ppm / -vram.ppm),
  *        written next to the program, for finding drawing glitches.
  *
+ *   F5   save: opens the memory-card save screen, as a phone does, wherever
+ *        the in-game menu could be opened (host patch of Entity_FrameUpdate).
+ *
  * For tests without a keyboard, PE_KEY_SCRIPT="first-last:mask,..." holds
  * keys for game frames first..last (mask 1 = skip movie, 2 = fast forward,
- * 4 = snapshot).
+ * 4 = snapshot, 8 = save).
  */
 #include <psyz.h>
 #include <psyz/video.h>
@@ -37,6 +40,8 @@ unsigned int pe_host_frame_number(void);
 #define SCANCODE_TAB 43
 #define SCANCODE_F12 69
 #define KEY_SNAP 4
+#define KEY_SAVE 8
+#define SCANCODE_F5 62
 
 static unsigned int script_keys(unsigned int frame) {
     static const char *script;
@@ -78,11 +83,15 @@ static unsigned int keys_now(void) {
         if (n > SCANCODE_F12 && k[SCANCODE_F12]) {
             m |= KEY_SNAP;
         }
+        if (n > SCANCODE_F5 && k[SCANCODE_F5]) {
+            m |= KEY_SAVE;
+        }
     }
     return m;
 }
 
 static unsigned int g_keys;
+static int g_save_request;
 static int g_fast;
 static PsyzVsyncMode g_saved_mode;
 
@@ -95,6 +104,9 @@ void pe_host_hotkeys_frame(void) {
     g_keys = keys_now();
     if ((g_keys & KEY_SNAP) && !(before & KEY_SNAP)) {
         pe_host_snapshot_request();
+    }
+    if ((g_keys & KEY_SAVE) && !(before & KEY_SAVE)) {
+        g_save_request = 1;
     }
     fast = (g_keys & KEY_FAST) != 0;
     if (fast != g_fast) {
@@ -113,3 +125,12 @@ int pe_host_fast_forward(void) { return g_fast; }
 
 /* While true, movie frames are marked as the last one (stream.c). */
 int pe_host_skip_key(void) { return (g_keys & KEY_SKIP) != 0; }
+
+/* F5 pressed since the last call: the field code opens the save screen when
+ * the in-game menu could open (src/main/entity/Entity_FrameUpdate.c patch).
+ * A request made where that is not possible is dropped. */
+int pe_host_take_save_request(void) {
+    int r = g_save_request;
+    g_save_request = 0;
+    return r;
+}

@@ -1,0 +1,30 @@
+--- a/src/main/entity/Entity_FrameUpdate.c
++++ b/src/main/entity/Entity_FrameUpdate.c
+@@ -9,6 +9,9 @@
+ 
+ /* Per-frame entity driver: callbacks, menu and battle hooks, camera, model
+  * matrices, transform and draw, then animation and position updates. */
++int pe_host_take_save_request(void);
++void Menu_OpenStartupMemCardDialog(void);
++
+ void Entity_FrameUpdate(void) {
+     FieldActor *entity;
+     FieldActor *focus;
+@@ -33,6 +36,17 @@
+                 Render_BeginSceneLoad();
+                 g_GameStateBlock.flags |= 4;
+                 D_800B0CD8[0] |= 0x9000;
++            } else if (pe_host_take_save_request() && g_PlayerEntity != 0 && g_PlayerEntity->state != 0 &&
++                       !(g_GameStateBlock.flags & 0x2000) && !(D_800B0CD8[0] & 0x3400)) {
++                /* Host addition (save anywhere): open the memory-card save
++                 * screen where the in-game menu could open, the way a phone's
++                 * script does it (Task_OpenMemCardDialog: scene freeze, the
++                 * card dialog, then the same flags as the menu). Closing it
++                 * goes through Menu_RunFrameWithArg below like the menu. */
++                Render_BeginSceneLoad();
++                Menu_OpenStartupMemCardDialog();
++                g_GameStateBlock.flags |= 4;
++                D_800B0CD8[0] |= 0x9000;
+             }
+             D_8009D2A4[0] = Menu_RunFrameWithArg(D_800A76D8);
+             if (D_8009D2A4[0] != 0) {
