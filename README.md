@@ -7,7 +7,8 @@ sound, CD drive, memory cards, controllers) is replaced by PC code.
 
 > **Status: playable through Day 3 of Disc 1.** On one Windows PC it has been
 > played from the start through the opera, the first battles, the sewers and
-> their bosses, to the end of Day 3, with music and sound effects. Saves load
+> their bosses, to the end of Day 3, with music and sound effects. Movies now
+> have their sound, and the play-time clock runs. Saves load
 > and save through `.mcd` memory card files (an ePSXe card worked as is), and
 > the in-game menu has a **Save Game** entry. Days 4 onward and Disc 2 have not
 > been tested yet. See [ROADMAP.md](ROADMAP.md) for where it is going and
@@ -85,7 +86,8 @@ Memory cards are `memcards/card1.mcd` and `card2.mcd` next to where the game
 runs (128 KiB raw images, the format ePSXe and other emulators use). If
 `card1.mcd` is missing, a blank formatted card is inserted and saved there on
 the first save. Loading a save puts Aya at the room's start point: the
-game's save does not record where she stood.
+game's save does not record where she stood. The play-time clock (top right
+of the menu, and in each save) counts in real time.
 
 ## Getting the source
 
@@ -134,8 +136,9 @@ spirv-cross (Ubuntu 24.04) and Microsoft's DXC v1.8.2505 for Linux.
 ## Known limits right now
 
 - Only Disc 1, and only tested to the end of Day 3.
-- No movie audio yet (XA audio sectors are skipped); music and sound effects
-  play.
+- Movie sound works (the XA audio in the movie streams plays through the
+  SPU's CD input), but lip sync has not been checked on long movies yet, so
+  sound and picture may drift apart.
 - Some ability and attack sound effects kept repeating; the latest fix (the
   sound sequencer's stop command) is waiting to be tested in a battle.
 - Some values the game reads from PS1 kernel RAM through NULL pointers are not

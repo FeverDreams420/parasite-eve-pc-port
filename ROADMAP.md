@@ -35,7 +35,9 @@ completely.
 - ✅ The opera house, the first battles, the sewers and their bosses, to the
   end of Day 3 (played on one PC).
 - 🔧 The rest of Disc 1 (Day 4 onward), fixing whatever breaks.
-- ⬜ Movie audio (XA ADPCM sectors, currently skipped).
+- 🔧 Movie audio: plays (XA ADPCM sectors to the SPU's CD input); lip sync on
+  long movies still to be checked, it may drift for now.
+- ✅ Play-time clock runs (it had stayed stopped).
 - 🔧 Music and sound effects: playing; effects that repeated are being fixed.
 - ✅ Saving and loading through the memory-card path (`.mcd` files; existing
   emulator cards work).
