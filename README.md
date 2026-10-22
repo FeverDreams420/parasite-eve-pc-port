@@ -5,12 +5,13 @@ A native Windows/Linux build of **Parasite Eve** (PlayStation, North America,
 emulator, no interpreter. The PlayStation hardware it talks to (graphics,
 sound, CD drive, memory cards, controllers) is replaced by PC code.
 
-> **Status: plays the opening of Disc 1.** On a real disc image it plays the
-> publisher screen, the opening movie, the title screen and menu, the New Game
-> movie, the scene outside Carnegie Hall, the name entry and the opera, up to
-> the stage scene with Melissa, with music. Beyond that point has not been
-> tested yet. See [ROADMAP.md](ROADMAP.md) for where it is going
-> and [pc/PROGRESS.md](pc/PROGRESS.md) for the detailed technical log.
+> **Status: playable through Day 3 of Disc 1.** On one Windows PC it has been
+> played from the start through the opera, the first battles, the sewers and
+> their bosses, to the end of Day 3, with music and sound effects. Saves load
+> and save through `.mcd` memory card files (an ePSXe card worked as is), and
+> the in-game menu has a **Save Game** entry. Days 4 onward and Disc 2 have not
+> been tested yet. See [ROADMAP.md](ROADMAP.md) for where it is going and
+> [pc/PROGRESS.md](pc/PROGRESS.md) for the detailed technical log.
 
 **You need your own copy of the game.** This repository contains no game data:
 no disc images, no executable, no movies, no extracted assets. The program reads
@@ -45,7 +46,8 @@ this project.
    in the game still points at the right data.
 3. **Function pointers are redirected.** At the original address of every
    function, a 5-byte x86 jump to the compiled C is written, so pointers stored
-   in game data call PC code (1718 functions in the main executable).
+   in game data call PC code (2062 functions, main executable and the field
+   engine).
 4. **Overlays are recognised as they load.** All 190 code chunks the game loads
    from `PE.IMG` are compiled in; after each CD read the loaded chunk is checked
    against your disc and its functions are switched to the compiled C.
@@ -68,6 +70,22 @@ this project.
 | L2 / R2 | W / E | | | |
 
 Xbox-style gamepads work through SDL (tested with an Xbox 360 controller).
+
+Extra keys in this port:
+
+| Key | What it does |
+| --- | --- |
+| Triangle menu → **Save Game** | opens the save screen anywhere the menu can open (last entry of the left column) |
+| F5 | the same save screen, as a shortcut |
+| ` / ~ (key under Escape) | skip the movie that is playing |
+| Tab (hold) | fast forward |
+| F12 | snapshot: the frame's drawing commands, picture and video memory, for bug reports |
+
+Memory cards are `memcards/card1.mcd` and `card2.mcd` next to where the game
+runs (128 KiB raw images, the format ePSXe and other emulators use). If
+`card1.mcd` is missing, a blank formatted card is inserted and saved there on
+the first save. Loading a save puts Aya at the room's start point: the
+game's save does not record where she stood.
 
 ## Getting the source
 
@@ -104,15 +122,22 @@ build/pc-link-win32/parasite-eve.exe "Parasite Eve (USA) (Disc 1).cue"
 
 Debug options (environment variables): `PE_CAPTURE_DIR` + `PE_CAPTURE_EVERY`
 (save frames), `PE_EXIT_AFTER`, `PE_PAD_SCRIPT` (scripted button presses),
-`PE_LOG_CD`, `PE_LOG_OVERLAYS`, `PE_LOG_GPU` / `PE_DUMP_GPU`, `PE_LOG_PAD`.
+`PE_KEY_SCRIPT` (scripted hotkeys), `PE_LOG_CD`, `PE_LOG_OVERLAYS`,
+`PE_LOG_GPU` / `PE_DUMP_GPU`, `PE_LOG_PAD`, `PE_LOG_SPU`, `PE_LOG_VSYNC`,
+`PE_SNAPSHOT_RAM` (F12 also saves PS1 RAM). On a crash the log gets a report
+(call chain, last CD reads, overlays) and `crash-dump.bin` holds the PS1
+memory; it contains game memory, so please do not post it publicly.
+
+The shaders in `pc/psyz-patches/0004-*` were rebuilt with glslang and
+spirv-cross (Ubuntu 24.04) and Microsoft's DXC v1.8.2505 for Linux.
 
 ## Known limits right now
 
-- Only Disc 1, and only up to the stage scene with Melissa.
+- Only Disc 1, and only tested to the end of Day 3.
 - No movie audio yet (XA audio sectors are skipped); music and sound effects
   play.
-- Small coloured streaks at the characters' shadows on Direct3D 12 (not seen
-  with other renderers yet).
+- Some ability and attack sound effects kept repeating; the latest fix (the
+  sound sequencer's stop command) is waiting to be tested in a battle.
 - Some values the game reads from PS1 kernel RAM through NULL pointers are not
   known; they read as 0 (see `pc/host/pe_host_lowmem.c`).
 - 32-bit build only (the identity-mapped design needs it).

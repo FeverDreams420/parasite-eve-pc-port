@@ -32,11 +32,15 @@ completely.
 ## Phase 2 — fully playable Disc 1 🔧
 
 - ✅ New Game movie, first scene outside Carnegie Hall, name entry.
-- ⬜ Play on through the opera house, the first battles and the rest of Disc 1,
-  fixing whatever breaks.
+- ✅ The opera house, the first battles, the sewers and their bosses, to the
+  end of Day 3 (played on one PC).
+- 🔧 The rest of Disc 1 (Day 4 onward), fixing whatever breaks.
 - ⬜ Movie audio (XA ADPCM sectors, currently skipped).
-- ⬜ Check music and sound effects against the original.
-- ⬜ Saving and loading through the memory-card path, as a stepping stone.
+- 🔧 Music and sound effects: playing; effects that repeated are being fixed.
+- ✅ Saving and loading through the memory-card path (`.mcd` files; existing
+  emulator cards work).
+- ✅ Character shadows without coloured streaks (texture reads kept inside
+  each polygon's own texture area).
 - ⬜ Values the game reads from PS1 kernel RAM through NULL pointers: find out
   what the real console holds there, if it matters anywhere.
 
