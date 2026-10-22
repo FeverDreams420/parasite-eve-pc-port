@@ -1,0 +1,26 @@
+--- a/src/main/menu/Menu_StepScrollCursor.c
++++ b/src/main/menu/Menu_StepScrollCursor.c
+@@ -142,6 +142,13 @@
+             changed = 1;
+             node->cursor_y = node->y_limit - 1;
+             Menu_PlayMoveSound();
++            /* Host fix: wrapping to the last row of a list taller than its
++             * window left the cursor off screen (the scroll below only moves
++             * one row); show the end of the list. */
++            if (node->y_limit > node->visible_rows) {
++                node->scroll_y = node->y_limit - node->visible_rows;
++                node->scroll_adjust = 0;
++            }
+         }
+         if (node->cursor_y < node->scroll_y && node->scroll_adjust == 0) {
+             int old = node->scroll_y;
+@@ -169,6 +176,9 @@
+             node->cursor_y = 0;
+             Menu_PlayMoveSound();
+             changed = 1;
++            /* Host fix: wrapping to the first row shows the top of the list. */
++            node->scroll_y = 0;
++            node->scroll_adjust = 0;
+         }
+         {
+             int old = node->scroll_y;
