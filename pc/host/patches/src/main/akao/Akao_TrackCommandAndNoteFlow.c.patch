@@ -1,6 +1,58 @@
 --- a/src/main/akao/Akao_TrackCommandAndNoteFlow.c
 +++ b/src/main/akao/Akao_TrackCommandAndNoteFlow.c
-@@ -1529,7 +1529,9 @@
+@@ -1377,7 +1377,7 @@
+     ((void (*)())sndTrackReadAdsrSustainLevel)(ptr, arg);
+ }
+ 
+-void SeqOp_SetDurationBAAndMask(AkaoTrack *track) {
++void SeqOp_SetDurationBAAndMask(AkaoTrack *track, u32 voice_mask) {
+     unsigned char *cursor = track->pc;
+     int value;
+ 
+@@ -1389,7 +1389,10 @@
+         value = 0x101;
+     }
+     track->key_on_delay = value;
+-    ((void (*)())SeqOp_SetTrack34Mask)(track);
++    /* Host: the sequencer calls opcode handlers as handler(track,
++     * voice_mask) (Akao_NoteTimingFlow.c), and the retail code passes that
++     * a1 on to the mask function unchanged. */
++    SeqOp_SetTrack34Mask(track, voice_mask);
+ }
+ 
+ void SeqOp_SetDuration(AkaoTrack *track) {
+@@ -1406,7 +1409,7 @@
+     track->key_on_delay = value;
+ }
+ 
+-void SeqOp_SetRepeatCount(AkaoTrack *track) {
++void SeqOp_SetRepeatCount(AkaoTrack *track, u32 voice_mask) {
+     unsigned char *cursor = track->pc;
+     int value;
+ 
+@@ -1418,7 +1421,10 @@
+         value = 0x101;
+     }
+     track->key_off_delay = value;
+-    ((void (*)())SeqOp_SetMask)(track);
++    /* Host: the sequencer calls opcode handlers as handler(track,
++     * voice_mask) (Akao_NoteTimingFlow.c), and the retail code passes that
++     * a1 on to the mask function unchanged. */
++    SeqOp_SetMask(track, voice_mask);
+ }
+ 
+ void SeqOp_SetDurationAlt(AkaoTrack *track) {
+@@ -1437,7 +1443,8 @@
+ 
+ void SeqOp_StopAndClearTrack(AkaoTrack *track, int arg) {
+     track->flags &= ~AKAO_TRACK_FLAG_STOP_CLEAR_MASK;
+-    ((void (*)())SeqOp_ClearTrack34Mask)(track);
++    /* Host: retail a1 = arg here too (unchanged from entry). */
++    SeqOp_ClearTrack34Mask(track, (u32)arg);
+     ((void (*)())SeqOp_ClearTrack3CMask)(track, arg);
+     ((void (*)())SeqOp_ClearMask)(track, arg);
+     track->tremolo_phase &= 0xFFFA;
+@@ -1529,7 +1536,9 @@
              track->flags |= AKAO_TRACK_FLAG_VOICE_ALLOCATED;
          }
      }
@@ -11,3 +63,34 @@
  }
  
  
+@@ -1537,7 +1546,7 @@
+ 
+ 
+ 
+-void SeqOp_NoteOnWithPitchSlide(void *track) {
++void SeqOp_NoteOnWithPitchSlide(void *track, u32 voice_mask) {
+     register AkaoTrack *base asm("$6");
+     register u8 *seq_first asm("$2");
+     u8 *seq;
+@@ -1591,7 +1600,8 @@
+         }
+     }
+ 
+-    ((void (*)())SeqOp_SetTrack38Mask)(base);
++    /* Host: retail a1 = the voice mask the sequencer passed (unchanged). */
++    SeqOp_SetTrack38Mask(base, voice_mask);
+ }
+ 
+ 
+@@ -1647,7 +1657,10 @@
+             *(u32 *)(state + 0x30) &= ~(1 << track->voice_index);
+         }
+     } else {
+-        ((void (*)())SeqOp_DeactivateVoice)((char *)track);
++        /* Host: retail a1 = arg1, the voice mask this stop opcode was given;
++         * without it the stopped sound's voice stayed in the active masks
++         * (and unrelated voices were cleared). */
++        SeqOp_DeactivateVoice((char *)track, (int)arg1);
+     }
+ 
+     *(u32 *)((char *)track + 0x38) = 0;
