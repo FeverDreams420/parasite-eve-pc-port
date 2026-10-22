@@ -69,7 +69,8 @@ static void pad_vsync(void) {
                 g_pad_buf[0][0], g_pad_buf[0][1], g_pad_buf[0][2], g_pad_buf[0][3],
                 *(volatile unsigned int *)0x8009D26Cu);
     }
-    if (g_pad_buf[0] && (m = script_mask(g_pad_frame)) != 0) {
+    m = script_mask(g_pad_frame);
+    if (g_pad_buf[0] && m != 0) {
         g_pad_buf[0][0] = 0;
         if (g_pad_buf[0][1] == 0 || g_pad_buf[0][1] == 0xFF) {
             g_pad_buf[0][1] = 0x41;

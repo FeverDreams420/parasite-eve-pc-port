@@ -127,6 +127,8 @@ static void debug_frame(void) {
  * up beyond those get their VBlank interrupt too, as on hardware (at most 8
  * at a time, so a long synchronous CD read does not cause a burst). */
 void Psyz_KernelVBlank(void);
+void pe_host_hotkeys_frame(void);
+int pe_host_fast_forward(void);
 #ifdef _WIN32
 /* Only Sleep is needed; <windows.h> clashes with the PS1 headers. */
 __declspec(dllimport) void __stdcall Sleep(unsigned long milliseconds);
@@ -148,12 +150,23 @@ int pe_psyq_VSync(int mode) {
     if (g_last_vblank < 0) {
         g_last_vblank = VSync(-1);
     }
+    pe_host_hotkeys_frame();
     pe_host_spu_sync();
     do {
         r = VSync(0);
         steps++;
         now = VSync(-1);
-    } while (mode >= 2 && now - g_last_vblank < mode && steps < mode);
+    } while (!pe_host_fast_forward() && mode >= 2 && now - g_last_vblank < mode && steps < mode);
+    if (pe_host_fast_forward()) {
+        /* Fast forward (Tab, hotkeys.c): one step per frame, no waiting; the
+         * VBlank interrupt runs as often as the game would have waited. */
+        for (extra = (mode >= 2 ? mode : 1) - steps; extra > 0; extra--) {
+            Psyz_KernelVBlank();
+        }
+        g_last_vblank = now;
+        debug_frame();
+        return r;
+    }
     /* Safety net where PsyZ's step does not really wait (no display, e.g.
      * the offscreen test driver): never return more than one refresh early. */
     while (mode >= 2 && now - g_last_vblank < mode - 1) {

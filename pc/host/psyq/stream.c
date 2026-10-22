@@ -25,6 +25,8 @@
 
 #include "pe_host_disc.h"
 
+int pe_host_skip_key(void);
+
 #ifdef _WIN32
 #include <windows.h>
 static double now_s(void) {
@@ -173,12 +175,26 @@ int pe_psyq_StGetNext(uint32_t **data, uint32_t **header) {
     if (got == 0) {
         return 1;
     }
-    wait_for_sector(g_lba - 1);
+    if (pe_host_skip_key()) {
+        /* Skip hotkey (hotkeys.c): every movie player stops once a frame's
+         * number reaches the movie's last frame (Memcard_UpdateVideoFrame:
+         * time >= entry->end, a 16-bit value), so this frame claims to be
+         * the last one and the movie ends the normal way. */
+        slot[8] = 0xFF;
+        slot[9] = 0x7F;
+        slot[10] = 0;
+        slot[11] = 0;
+    } else {
+        wait_for_sector(g_lba - 1);
+    }
     g_slot ^= 1;
     *header = (uint32_t *)slot;
     *data = (uint32_t *)(slot + 32);
     return 0;
 }
+
+/* Is a movie stream running (for the skip hotkey, hotkeys.c)? */
+int pe_host_stream_active(void) { return g_active && g_ring != NULL; }
 
 int pe_psyq_StFreeRing(uint32_t *base) {
     (void)base;
