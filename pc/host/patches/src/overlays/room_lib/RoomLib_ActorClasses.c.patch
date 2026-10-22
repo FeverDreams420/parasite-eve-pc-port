@@ -1,0 +1,59 @@
+--- a/src/overlays/room_lib/RoomLib_ActorClasses.c
++++ b/src/overlays/room_lib/RoomLib_ActorClasses.c
+@@ -172,7 +172,10 @@
+     return 0;
+ }
+ int RoomLib_UpdateHandlerD(RoomEnt *o) {
+-    switch (func_800DFB78()) {
++    /* Host: the retail code calls this with a0 = the entity (o), left
++     * unchanged from this function's own argument; func_800DFB78(arg0)
++     * uses it. */
++    switch (((int (*)(void *))func_800DFB78)(o)) {
+     case 0:
+         if (o->link->variant < 2) {
+             return 0;
+@@ -660,7 +663,10 @@
+     return 0;
+ }
+ int RoomLib_UpdateHandlerE(RoomEnt *o) {
+-    switch (func_800DFB78()) {
++    /* Host: the retail code calls this with a0 = the entity (o), left
++     * unchanged from this function's own argument; func_800DFB78(arg0)
++     * uses it. */
++    switch (((int (*)(void *))func_800DFB78)(o)) {
+     case 0:
+         if (o->link->variant < 2) {
+             return 0;
+@@ -992,7 +998,9 @@
+     return 0;
+ }
+ int RoomLib_UpdateHandlerB(RoomObj *obj) {
+-    obj->callback();
++    /* Host: the retail call (jalr) has a0 = obj, this function's own
++     * argument, which the step routines receive. */
++    ((void (*)(void *))obj->callback)(obj);
+     return 0;
+ }
+ void RoomLib_ArmHandlerB(RoomEnt *o) {
+@@ -1458,7 +1466,9 @@
+     return 0;
+ }
+ int RoomLib_UpdateHandlerC(RoomObj *obj) {
+-    obj->callback();
++    /* Host: the retail call (jalr) has a0 = obj, this function's own
++     * argument, which the step routines receive. */
++    ((void (*)(void *))obj->callback)(obj);
+     return 0;
+ }
+ void RoomLib_ArmHandlerC(RoomEnt *o) {
+@@ -1822,7 +1832,9 @@
+     return 0;
+ }
+ int RoomLib_UpdateHandlerA(RoomObj *obj) {
+-    obj->callback();
++    /* Host: the retail call (jalr) has a0 = obj, this function's own
++     * argument, which the step routines receive. */
++    ((void (*)(void *))obj->callback)(obj);
+     return 0;
+ }
+ void RoomLib_RearmHandlerA(RoomEnt *o) {

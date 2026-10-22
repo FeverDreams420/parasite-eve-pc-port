@@ -1,0 +1,12 @@
+--- a/src/overlays/room_lib/RoomLib_UpdateCallback.c
++++ b/src/overlays/room_lib/RoomLib_UpdateCallback.c
+@@ -7,6 +7,8 @@
+ #include "room_lib.h"
+ 
+ int RoomLib_UpdateCallback(RoomObj *obj) {
+-    obj->callback();
++    /* Host: the retail call (jalr) has a0 = obj, this function's own
++     * argument, which the step routines receive. */
++    ((void (*)(void *))obj->callback)(obj);
+     return 0;
+ }

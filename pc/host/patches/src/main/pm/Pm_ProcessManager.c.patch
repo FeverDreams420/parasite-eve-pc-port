@@ -1,0 +1,26 @@
+--- a/src/main/pm/Pm_ProcessManager.c
++++ b/src/main/pm/Pm_ProcessManager.c
+@@ -337,7 +337,11 @@
+     }
+     callback = handler->start;
+     if (callback != 0) {
+-        return callback();
++        /* Host: the retail code reaches this call (jalr at 0x8006F9D8) with
++         * a0 = the slot entry and a1 = the clamped command, and start
++         * routines such as func_800D4704(owner) use a0. A call with no
++         * arguments leaves them reading the x86 stack, so pass both. */
++        return ((int (*)(void *, int))callback)((void *)arg0, cmd);
+     }
+ 
+     return -1;
+@@ -500,7 +504,9 @@
+         return -1;
+     }
+ 
+-    result = callback();
++    /* Host: as in Pm_Start, the retail call (jalr at 0x8006FD2C) has
++     * a0 = the slot entry and a1 = the clamped command. */
++    result = ((int (*)(void *, int))callback)((void *)arg0, arg1);
+ 
+     if ((unsigned int)orig < 0x16) {
+         if ((unsigned int)orig >= 0xB) {

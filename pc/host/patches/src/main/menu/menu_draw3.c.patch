@@ -1,0 +1,15 @@
+--- a/src/main/menu/menu_draw3.c
++++ b/src/main/menu/menu_draw3.c
+@@ -7,8 +7,10 @@
+ 
+ void MenuWidget_DrawCenteredTableText(int arg0);
+ 
+-void Menu_DrawArmorEquipItem(void) {
+-    Inv_ShowItemDescriptionPanel();
++/* Host: MenuWidget_DrawList calls this with the item index in a0, and the
++ * retail code passes that register on unchanged. */
++void Menu_DrawArmorEquipItem(int arg0) {
++    ((void (*)(int))Inv_ShowItemDescriptionPanel)(arg0);
+ }
+ 
+ void Menu_DrawMemCardPortItem(int arg0) {

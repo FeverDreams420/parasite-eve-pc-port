@@ -1,0 +1,23 @@
+--- a/src/main/battle/Battle_DispatchEntityEffect.c
++++ b/src/main/battle/Battle_DispatchEntityEffect.c
+@@ -47,7 +47,10 @@
+ 
+     if (action_id == 6) {
+         if ((action->attackWord & 0x3FF) == 0) {
+-            BattleCmd_CommitAmmoAndUpdate();
++            /* Host: retail a0 = action (actor->action) at both of these
++             * calls; BattleCmd_CommitAmmoAndUpdate passes it on to
++             * Inv_BuildWeaponList as its output. */
++            ((int (*)(void *))BattleCmd_CommitAmmoAndUpdate)(action);
+         }
+         D_8009D200 = Scene_LoadRoomAssets(3, D_8009D254_A);
+         return;
+@@ -59,7 +62,7 @@
+     }
+ 
+     if ((action->attackWord & 0x3FF) == 0) {
+-        BattleCmd_CommitAmmoAndUpdate();
++        ((int (*)(void *))BattleCmd_CommitAmmoAndUpdate)(action);
+     }
+ 
+     actor = D_8009D278_B;

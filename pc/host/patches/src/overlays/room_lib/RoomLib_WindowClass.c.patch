@@ -1,0 +1,13 @@
+--- a/src/overlays/room_lib/RoomLib_WindowClass.c
++++ b/src/overlays/room_lib/RoomLib_WindowClass.c
+@@ -127,7 +127,9 @@
+ 
+ /* Runs the armed handler, or releases the class when the script ends. */
+ int RoomLib_UpdateWindowClass(RoomEnt *o) {
+-    switch (func_800DFB78()) {
++    /* Host: the retail code calls this with a0 = o (unchanged argument);
++     * func_800DFB78(arg0) uses it. */
++    switch (((int (*)(void *))func_800DFB78)(o)) {
+     case 0:
+         ((void (*)(RoomEnt *))o->sub.cb)(o);
+         return 0;

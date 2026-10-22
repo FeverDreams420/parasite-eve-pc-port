@@ -1,0 +1,14 @@
+--- a/src/main/main/Battle_BuildTargetList.c
++++ b/src/main/main/Battle_BuildTargetList.c
+@@ -53,7 +53,10 @@
+                         (ENEMY_FIELD(temp_a2, s32 *, hpAlive) > 0)) {
+                         off1 = g_BattleTargetIndex * 0xC;
+                         E000_AT(off1) = var_s0;
+-                        res = Battle_CalcDistToPlayer(var_s0);
++                        /* Host: retail a1 = dp (g_PlayerEntity, loaded at
++                         * the top of the loop); Battle_CalcDistToPlayer
++                         * measures from it. */
++                        res = ((int (*)(void *, void *))Battle_CalcDistToPlayer)(var_s0, dp);
+                         off = g_BattleTargetIndex * 0xC;
+                         E004_AT(off) = res;
+                         res2 = ratan2(

@@ -1,0 +1,13 @@
+--- a/src/main/akao/Akao_TrackCommandAndNoteFlow.c
++++ b/src/main/akao/Akao_TrackCommandAndNoteFlow.c
+@@ -1529,7 +1529,9 @@
+             track->flags |= AKAO_TRACK_FLAG_VOICE_ALLOCATED;
+         }
+     }
+-    ((void (*)())SeqOp_SetTrack38Mask)();
++    /* Host: the retail jal has a0 = track and a1 = arg1, both unchanged
++     * from this function's own arguments. */
++    SeqOp_SetTrack38Mask(track, (u32)arg1);
+ }
+ 
+ 

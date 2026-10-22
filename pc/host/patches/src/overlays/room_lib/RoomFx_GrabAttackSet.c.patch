@@ -1,0 +1,13 @@
+--- a/src/overlays/room_lib/RoomFx_GrabAttackSet.c
++++ b/src/overlays/room_lib/RoomFx_GrabAttackSet.c
+@@ -85,7 +85,9 @@
+ 
+ /* Class update: runs the current state. */
+ int RoomFx_GrabUpdate(RoomMotionTrigger *obj) {
+-    obj->callback();
++    /* Host: the retail call (jalr) has a0 = obj, this function's own
++     * argument, which the step routines receive. */
++    ((void (*)(void *))obj->callback)(obj);
+     return 0;
+ }
+ 

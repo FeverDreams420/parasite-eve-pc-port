@@ -1,0 +1,25 @@
+--- a/src/main/main/Battle_FinalizeAttackResult.c
++++ b/src/main/main/Battle_FinalizeAttackResult.c
+@@ -218,7 +218,10 @@
+             goto finish;
+         }
+         }
+-        if (BattleCmd_CommitAmmoAndUpdate()) {
++        /* Host: the retail jal has a0 = active->action (the attackAction
++         * register tested just above), which BattleCmd_CommitAmmoAndUpdate
++         * hands to Inv_BuildWeaponList as its output. */
++        if (((int (*)(void *))BattleCmd_CommitAmmoAndUpdate)(active->action)) {
+             Entity_SetActionMode((*(BattleEntity **)battle_entity_alias_1), 0xC);
+             Akao_SetPos3D(1, 0, (*(BattleEntity **)battle_entity_alias_2)->posX.parts.integer,
+                           (*(BattleEntity **)battle_entity_alias_2)->posY.parts.integer, (*(BattleEntity **)battle_entity_alias_2)->posZ.parts.integer);
+@@ -248,7 +251,9 @@
+             goto finish;
+             }
+         }
+-        if (BattleCmd_CommitAmmoAndUpdate()) {
++        /* Host: retail a0 = activeAction here (its attackWord was just
++         * tested through a0). */
++        if (((int (*)(void *))BattleCmd_CommitAmmoAndUpdate)(activeAction)) {
+             Entity_SetActionMode((*(BattleEntity **)battle_entity_alias_4), 0xC);
+             Akao_SetPos3D(1, 0, (*(BattleEntity **)battle_entity_alias_5)->posX.parts.integer,
+                           (*(BattleEntity **)battle_entity_alias_5)->posY.parts.integer, (*(BattleEntity **)battle_entity_alias_5)->posZ.parts.integer);
