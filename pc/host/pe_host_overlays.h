@@ -30,6 +30,8 @@ void pe_host_overlays_init(void);
  * now complete in RAM. */
 void pe_host_overlays_note_write(unsigned int addr, unsigned int len);
 /* The same for a CD read of `len` bytes from disc sector `disc_lba`. */
+/* Crash report: what is loaded where. */
+void pe_host_overlays_report(void);
 void pe_host_overlays_note_read(unsigned int addr, unsigned int len, int disc_lba);
 
 #endif

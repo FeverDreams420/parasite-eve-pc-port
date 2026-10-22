@@ -26,6 +26,40 @@ void pe_game_main(void); /* the game's main(), renamed at link time */
 void pe_host_sha1(const void *data, unsigned int len, unsigned char out[20]);
 int pe_host_lowmem_emulate(const unsigned char *ip, unsigned int addr, unsigned int *r[8]);
 
+void pe_host_cd_report(void);
+
+/* After a fatal fault: the stack words at esp, the return addresses found by
+ * following the saved-ebp chain (the game is built with frame pointers), the
+ * frame number, the last CD reads and what overlays are loaded. Map the
+ * addresses back to functions with addr2line on the same .exe. */
+unsigned int pe_host_frame_number(void);
+static void crash_report(unsigned int eip, unsigned int esp, unsigned int ebp) {
+    unsigned int i, *sp = (unsigned int *)(uintptr_t)esp;
+    fprintf(stderr, "pe: crash report (frame %u): eip=0x%08X esp=0x%08X ebp=0x%08X\n", pe_host_frame_number(),
+            eip, esp, ebp);
+    fprintf(stderr, "pe:   stack:");
+    for (i = 0; i < 16; i++) {
+        fprintf(stderr, " %08X", sp[i]);
+    }
+    fprintf(stderr, "\n");
+    fprintf(stderr, "pe:   call chain:");
+    for (i = 0; i < 24; i++) {
+        unsigned int *fp = (unsigned int *)(uintptr_t)ebp;
+        if (ebp < esp || ebp - esp > 0x100000u || (ebp & 3)) {
+            break;
+        }
+        fprintf(stderr, " %08X", fp[1]);
+        if (fp[0] <= ebp) {
+            break;
+        }
+        ebp = fp[0];
+    }
+    fprintf(stderr, "\n");
+    pe_host_cd_report();
+    pe_host_overlays_report();
+    fflush(stderr);
+}
+
 /* Is `eip` inside this program's own code (where the game's code is)? */
 #ifdef _WIN32
 static int in_own_code(unsigned int eip) {
@@ -114,6 +148,7 @@ static void on_fault(int sig, siginfo_t *si, void *ctx) {
     } else {
         fprintf(stderr, "pe: signal %d at eip=0x%08X, address 0x%08X\n", sig, eip,
                 (unsigned int)(uintptr_t)si->si_addr);
+        crash_report(eip, esp, (unsigned int)uc->uc_mcontext.gregs[REG_EBP]);
     }
     _exit(3);
 }
@@ -145,11 +180,13 @@ static LONG CALLBACK on_exception(EXCEPTION_POINTERS *ep) {
         }
         fprintf(stderr, "pe: exception 0x%08lX at eip=0x%08X, address 0x%08lX\n", (unsigned long)code, eip,
                 (unsigned long)ep->ExceptionRecord->ExceptionInformation[1]);
+        crash_report(eip, (unsigned int)ep->ContextRecord->Esp, (unsigned int)ep->ContextRecord->Ebp);
     } else if (code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_ILLEGAL_INSTRUCTION ||
                code == EXCEPTION_PRIV_INSTRUCTION) {
         fprintf(stderr, "pe: exception 0x%08lX at eip=0x%08X, address 0x%08lX\n",
                 (unsigned long)code, eip,
                 (unsigned long)ep->ExceptionRecord->ExceptionInformation[1]);
+        crash_report(eip, (unsigned int)ep->ContextRecord->Esp, (unsigned int)ep->ContextRecord->Ebp);
     } else {
         return EXCEPTION_CONTINUE_SEARCH;
     }

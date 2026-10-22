@@ -95,8 +95,23 @@ static int next_id(void) {
     return id;
 }
 
+/* For crash reports: the last CD reads. */
+static struct { int lba, sectors; unsigned int dst; } g_cd_recent[8];
+static unsigned int g_cd_recent_n;
+void pe_host_cd_report(void) {
+    unsigned int k;
+    for (k = g_cd_recent_n > 8 ? g_cd_recent_n - 8 : 0; k < g_cd_recent_n; k++) {
+        fprintf(stderr, "pe:   CD read: sector %d x%d -> 0x%08X\n", g_cd_recent[k % 8].lba,
+                g_cd_recent[k % 8].sectors, g_cd_recent[k % 8].dst);
+    }
+}
+
 int pe_psyq_DsRead(DslLOC *pos, int sectors, void *buf, int mode) {
     int lba = pos ? pe_psyq_DsPosToInt(pos) : g_last_lba;
+    g_cd_recent[g_cd_recent_n % 8].lba = lba;
+    g_cd_recent[g_cd_recent_n % 8].sectors = sectors;
+    g_cd_recent[g_cd_recent_n % 8].dst = (unsigned int)(uintptr_t)buf;
+    g_cd_recent_n++;
     (void)mode; /* the game reads 2048-byte data sectors (mode | 0x20) */
     if (getenv("PE_LOG_CD")) {
         fprintf(stderr, "pe: DsRead sector %d x%d -> 0x%08X (mode 0x%X)\n", lba, sectors,

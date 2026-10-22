@@ -89,6 +89,27 @@ void pe_host_overlays_init(void) {
     fprintf(stderr, "pe: %u overlays verified against the disc, %u differ\n", ok, bad);
 }
 
+/* For crash reports: the overlay installed in each load window, and the last
+ * recognitions (linear overlays and fragmented-overlay function batches). */
+static char g_recent[8][96];
+static unsigned int g_recent_n;
+static void note_recent(const char *what, const char *name, unsigned int a, unsigned int b) {
+    snprintf(g_recent[g_recent_n % 8], sizeof(g_recent[0]), "%s %s 0x%08X..0x%08X", what, name, a, b);
+    g_recent_n++;
+}
+
+void pe_host_overlays_report(void) {
+    int i;
+    unsigned int k;
+    for (i = 0; i < g_windows; i++) {
+        fprintf(stderr, "pe:   load window 0x%08X: %s\n", g_window_vram[i],
+                g_current[i] >= 0 ? pe_overlay_table[g_current[i]].name : "(no overlay recognised)");
+    }
+    for (k = g_recent_n > 8 ? g_recent_n - 8 : 0; k < g_recent_n; k++) {
+        fprintf(stderr, "pe:   recognised: %s\n", g_recent[k % 8]);
+    }
+}
+
 static void install(unsigned int i) {
     const PeHostOverlay *o = &pe_overlay_table[i];
     int slot = window_slot(o->vram);
@@ -99,6 +120,7 @@ static void install(unsigned int i) {
     if (slot >= 0) {
         g_current[slot] = (int)i;
     }
+    note_recent("overlay", o->name, o->vram, o->vram + o->size);
     if (getenv("PE_LOG_OVERLAYS")) {
         fprintf(stderr, "pe: overlay %s loaded at 0x%08X (%u functions)\n", o->name, o->vram,
                 o->func_count);
@@ -161,6 +183,9 @@ void pe_host_overlays_note_read(unsigned int addr, unsigned int len, int disc_lb
                     pe_host_write_jump(fa, o->funcs[k].host);
                     n++;
                 }
+            }
+            if (n) {
+                note_recent("functions of", o->name, addr, end);
             }
             if (n && getenv("PE_LOG_OVERLAYS")) {
                 fprintf(stderr, "pe: %u functions of %s recognised at 0x%08X..0x%08X\n", n, o->name,
