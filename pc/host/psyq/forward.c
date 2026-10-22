@@ -107,6 +107,15 @@ static void snapshot_step(void) {
             write_ppm(path, rgb, w, h);
             free(rgb);
         }
+        if (getenv("PE_SNAPSHOT_RAM")) {
+            /* Debug: also the 2 MiB of PS1 RAM, for finding game tables. */
+            FILE *rf;
+            snprintf(path, sizeof(path), "snapshot-%05u-ram.bin", g_frames);
+            if ((rf = fopen(path, "wb")) != NULL) {
+                fwrite((const void *)(uintptr_t)0x80000000u, 1, 0x200000, rf);
+                fclose(rf);
+            }
+        }
         fprintf(stderr, "pe: snapshot of frame %u saved\n", g_frames);
         g_snap_state = 0;
     }

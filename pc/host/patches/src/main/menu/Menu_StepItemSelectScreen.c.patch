@@ -1,0 +1,46 @@
+--- a/src/main/menu/Menu_StepItemSelectScreen.c
++++ b/src/main/menu/Menu_StepItemSelectScreen.c
+@@ -35,6 +35,7 @@
+ extern void MenuWidget_InitPool(void);
+ extern void BattleCmd_ResetTableCursor(void);
+ extern void Menu_InitScrollDirection(void);
++void pe_host_request_save(void);
+ 
+ #define CLOSE_SELECT_VIEWS() do { \
+     MenuWidget_NavScrollTo(0x2d); \
+@@ -57,7 +58,8 @@
+         if (Menu_GetBattleEquipMode()) {
+             mask = D_8009CEF0 & 0x1f;
+         } else {
+-            mask = D_8009CEF0 & 0x1ef;
++            /* Host addition: bit 9, the Save Game entry, outside battle. */
++            mask = (D_8009CEF0 & 0x1ef) | 0x200;
+         }
+         action = -1;
+         goto check;
+@@ -67,7 +69,7 @@
+             mask >>= 1;
+             ++action;
+         check:
+-            if (action >= 9) break;
++            if (action >= 10) break;
+         }
+         switch (action) {
+         case 0:
+@@ -142,6 +144,16 @@
+             D_8009CEF8 = 0;
+             break;
+         }
++        case 9:
++            /* Host addition, Save Game: close the menu as Cancel does, and
++             * ask for the save screen; Entity_FrameUpdate opens it once the
++             * menu is closed, under the same conditions as the menu. */
++            MenuWidget_InitPool();
++            Inv_SetActiveList(9, 0);
++            BattleCmd_ResetTableCursor();
++            pe_host_request_save();
++            Menu_PlayConfirmSound();
++            goto return_one;
+         default:
+             goto return_one;
+         }

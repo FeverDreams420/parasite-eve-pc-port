@@ -1,0 +1,17 @@
+--- a/src/main/menu/Menu_OpenEquipInventoryScreens.c
++++ b/src/main/menu/Menu_OpenEquipInventoryScreens.c
+@@ -142,11 +142,12 @@
+                 bits = raw & 0x1F;
+             } else {
+                 raw = g_MenuItemContextFlag;
+-                bits = raw & 0x1EF;
++                /* Host addition: bit 9, the Save Game entry, outside battle. */
++                bits = (raw & 0x1EF) | 0x200;
+             }
+ 
+             count = 0;
+-            loop_counter = 8;
++            loop_counter = 9;
+             do {
+                 count += bits & 1;
+                 loop_counter--;

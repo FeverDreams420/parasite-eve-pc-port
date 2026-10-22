@@ -50,7 +50,11 @@ completely.
 
 ## Phase 4 — a PC game, not a PS1 game ⬜
 
-- ⬜ Native saves: save from the menu at any time, no memory card files.
+- 🔧 Save from the menu at any time: a **Save Game** entry at the bottom of
+  the in-game menu (and F5) opens the save screen wherever the menu can open.
+  Loading puts Aya at the room's start point, since the game's save does not
+  store her position; restoring the exact spot is next.
+- ⬜ Native saves without memory card files.
 - ⬜ In-game settings menu holding every mod and graphics option.
 - ⬜ Controller remapping, Xbox button icons, keyboard and mouse.
 - ⬜ Brightness and contrast settings.

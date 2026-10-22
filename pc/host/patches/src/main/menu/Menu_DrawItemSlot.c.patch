@@ -1,0 +1,17 @@
+--- a/src/main/menu/Menu_DrawItemSlot.c
++++ b/src/main/menu/Menu_DrawItemSlot.c
+@@ -21,11 +21,12 @@
+     if (Menu_GetBattleEquipMode() != 0) {
+         mask = g_MenuItemContextFlag & 0x1F;
+     } else {
+-        mask = g_MenuItemContextFlag & 0x1EF;
++        /* Host addition: bit 9, the Save Game entry (icon 0x56 + 9). */
++        mask = (g_MenuItemContextFlag & 0x1EF) | 0x200;
+     }
+ 
+     index = -1;
+-    while (index < 9 && var_s1 >= 0) {
++    while (index < 10 && var_s1 >= 0) {
+         var_s1 -= mask & 1;
+         mask >>= 1;
+         index++;

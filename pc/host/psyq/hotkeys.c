@@ -134,3 +134,13 @@ int pe_host_take_save_request(void) {
     g_save_request = 0;
     return r;
 }
+
+/* The in-game menu's Save Game entry (host patch of
+ * Menu_StepItemSelectScreen) closes the menu and asks for the save screen,
+ * which the field code then opens like F5. */
+void pe_host_request_save(void) { g_save_request = 1; }
+
+/* "Save Game" in the game's text encoding (capitals from 0x10, lower case
+ * from 0x30, space 0x0F, 0xFF ends it), for the menu's help line. */
+static unsigned char g_save_game_text[] = {0x22, 0x30, 0x45, 0x34, 0x0F, 0x16, 0x30, 0x3C, 0x34, 0xFF};
+unsigned char *pe_host_save_game_text(void) { return g_save_game_text; }

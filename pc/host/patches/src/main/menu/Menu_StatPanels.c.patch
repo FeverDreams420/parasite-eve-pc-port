@@ -1,0 +1,16 @@
+--- a/src/main/menu/Menu_StatPanels.c
++++ b/src/main/menu/Menu_StatPanels.c
+@@ -39,10 +39,11 @@
+         if (Menu_GetBattleEquipMode() != 0) {
+             var_v1 = g_MenuItemContextFlag & 0x1F;
+         } else {
+-            var_v1 = g_MenuItemContextFlag & 0x1EF;
++            /* Host addition: bit 9, the Save Game entry, outside battle. */
++            var_v1 = (g_MenuItemContextFlag & 0x1EF) | 0x200;
+         }
+         var_a1 = 0;
+-        var_a0 = 8;
++        var_a0 = 9;
+         do {
+             var_a1 += var_v1 & 1;
+             var_a0 -= 1;
