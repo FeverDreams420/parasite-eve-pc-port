@@ -12,6 +12,7 @@
 #include <libgte.h>
 #include <libspu.h>
 #include <libsnd.h>
+#include <stdint.h>
 #include <string.h>
 
 void pe_host_spu_sync(void);
@@ -79,6 +80,41 @@ static void write_ppm(const char *path, const unsigned char *rgb, int w, int h) 
     fclose(f);
 }
 
+/* F12 snapshot: requested -> record the next frame's packets -> at its
+ * VSync save the picture and video memory. */
+void pe_host_snapshot_gpu_begin(unsigned int frame);
+void pe_host_snapshot_gpu_end(void);
+static int g_snap_state; /* 0 idle, 1 requested, 2 recording */
+void pe_host_snapshot_request(void) {
+    if (g_snap_state == 0) {
+        g_snap_state = 1;
+    }
+}
+static void snapshot_step(void) {
+    if (g_snap_state == 2) {
+        char path[64];
+        int w, h;
+        unsigned char *rgb;
+        pe_host_snapshot_gpu_end();
+        if ((rgb = Psyz_VideoAllocCapturedFrame(&w, &h)) != NULL) {
+            snprintf(path, sizeof(path), "snapshot-%05u-frame.ppm", g_frames);
+            write_ppm(path, rgb, w, h);
+            free(rgb);
+        }
+        if ((rgb = Psyz_VideoAllocVramDump(&w, &h)) != NULL) {
+            snprintf(path, sizeof(path), "snapshot-%05u-vram.ppm", g_frames);
+            write_ppm(path, rgb, w, h);
+            free(rgb);
+        }
+        fprintf(stderr, "pe: snapshot of frame %u saved\n", g_frames);
+        g_snap_state = 0;
+    }
+    if (g_snap_state == 1) {
+        pe_host_snapshot_gpu_begin(g_frames + 1);
+        g_snap_state = 2;
+    }
+}
+
 static void debug_frame(void) {
     static int every = -1, exit_after = -1;
     static const char *dir;
@@ -88,6 +124,7 @@ static void debug_frame(void) {
         exit_after = getenv("PE_EXIT_AFTER") ? atoi(getenv("PE_EXIT_AFTER")) : 0;
     }
     g_frames++;
+    snapshot_step();
     if (dir && every > 0 && g_frames % (unsigned)every == 0) {
         char path[512];
         int w, h;
@@ -105,6 +142,17 @@ static void debug_frame(void) {
             snprintf(path, sizeof(path), "%s/vram_%05u.ppm", dir, g_frames);
             write_ppm(path, rgb, w, h);
             free(rgb);
+        }
+    }
+    {
+        /* PE_TEST_CRASH=n: jump to a bad address at frame n (tests the
+         * crash report and crash-dump.bin). */
+        static int crash_at = -2;
+        if (crash_at == -2) {
+            crash_at = getenv("PE_TEST_CRASH") ? atoi(getenv("PE_TEST_CRASH")) : -1;
+        }
+        if (crash_at > 0 && g_frames == (unsigned)crash_at) {
+            ((void (*)(void))(uintptr_t)0x80210001u)();
         }
     }
     if (exit_after > 0 && g_frames >= (unsigned)exit_after) {

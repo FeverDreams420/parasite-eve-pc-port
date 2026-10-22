@@ -59,7 +59,29 @@ static void gpu_log_flush_frame(void) {
     memset(g_hist, 0, sizeof(g_hist));
     g_hist_frame = f;
 }
+/* F12 snapshot (hotkeys.c): every packet of one frame goes to a file. */
+static FILE *g_snap_file;
+static unsigned int g_snap_frame;
+void pe_host_snapshot_gpu_begin(unsigned int frame) {
+    char path[64];
+    if (g_snap_file) {
+        fclose(g_snap_file);
+    }
+    snprintf(path, sizeof(path), "snapshot-%05u-gpu.txt", frame);
+    g_snap_file = fopen(path, "w");
+    g_snap_frame = frame;
+}
+void pe_host_snapshot_gpu_end(void) {
+    if (g_snap_file) {
+        fclose(g_snap_file);
+        g_snap_file = NULL;
+    }
+}
+
 void pe_host_gpu_log_note(const char *what, int a, int b, int c, int d) {
+    if (g_snap_file) {
+        fprintf(g_snap_file, "%s %d,%d %d,%d\n", what, a, b, c, d);
+    }
     if (gpu_log_on()) {
         fprintf(stderr, "pe: gpu frame %u: %s %d,%d %d,%d\n", pe_host_frame_number(), what, a, b, c, d);
     }
@@ -70,6 +92,12 @@ static void push_packet(const uint32_t *p) {
     uint32_t i;
     if (len == 0) {
         return;
+    }
+    if (g_snap_file) {
+        uint32_t k;
+        for (k = 1; k <= len; k++) {
+            fprintf(g_snap_file, "%08X%c", p[k], k == len ? '\n' : ' ');
+        }
     }
     if (gpu_log_on()) {
         gpu_log_flush_frame();

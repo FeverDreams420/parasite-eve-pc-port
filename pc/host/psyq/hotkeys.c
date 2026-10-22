@@ -14,8 +14,13 @@
  * focus. Scan codes, not characters: 53 is the key top-left under Escape on
  * any layout, 43 is Tab (SDL_scancode.h).
  *
+ *   F12  snapshot: the next frame's GPU commands (snapshot-NNNNN-gpu.txt), its
+ *        picture and video memory (snapshot-NNNNN-frame.ppm / -vram.ppm),
+ *        written next to the program, for finding drawing glitches.
+ *
  * For tests without a keyboard, PE_KEY_SCRIPT="first-last:mask,..." holds
- * keys for game frames first..last (mask 1 = skip movie, 2 = fast forward).
+ * keys for game frames first..last (mask 1 = skip movie, 2 = fast forward,
+ * 4 = snapshot).
  */
 #include <psyz.h>
 #include <psyz/video.h>
@@ -30,6 +35,8 @@ unsigned int pe_host_frame_number(void);
 #define KEY_FAST 2
 #define SCANCODE_GRAVE 53
 #define SCANCODE_TAB 43
+#define SCANCODE_F12 69
+#define KEY_SNAP 4
 
 static unsigned int script_keys(unsigned int frame) {
     static const char *script;
@@ -68,6 +75,9 @@ static unsigned int keys_now(void) {
         if (k[SCANCODE_TAB]) {
             m |= KEY_FAST;
         }
+        if (n > SCANCODE_F12 && k[SCANCODE_F12]) {
+            m |= KEY_SNAP;
+        }
     }
     return m;
 }
@@ -77,9 +87,15 @@ static int g_fast;
 static PsyzVsyncMode g_saved_mode;
 
 /* Once per game frame, from VSync. */
+void pe_host_snapshot_request(void);
+
 void pe_host_hotkeys_frame(void) {
     int fast;
+    unsigned int before = g_keys;
     g_keys = keys_now();
+    if ((g_keys & KEY_SNAP) && !(before & KEY_SNAP)) {
+        pe_host_snapshot_request();
+    }
     fast = (g_keys & KEY_FAST) != 0;
     if (fast != g_fast) {
         if (fast) {

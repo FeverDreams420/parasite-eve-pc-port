@@ -33,6 +33,56 @@ void pe_host_cd_report(void);
  * frame number, the last CD reads and what overlays are loaded. Map the
  * addresses back to functions with addr2line on the same .exe. */
 unsigned int pe_host_frame_number(void);
+
+/* crash-dump.bin next to the program: "PECRASH1", eip, esp, ebp (u32 each),
+ * then 16 KiB of the host stack from esp, the 2 MiB of PS1 RAM and the 1 KiB
+ * scratchpad. It holds the game's memory, so it stays on your computer. */
+static void crash_dump(unsigned int eip, unsigned int esp, unsigned int ebp) {
+    FILE *f = fopen("crash-dump.bin", "wb");
+    unsigned int hdr[3] = {eip, esp, ebp};
+    if (!f) {
+        fprintf(stderr, "pe:   (could not write crash-dump.bin)\n");
+        return;
+    }
+    unsigned int n = 0x4000, room = 0;
+    static unsigned char zero[0x4000];
+#ifdef _WIN32
+    {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (VirtualQuery((const void *)(uintptr_t)esp, &mbi, sizeof(mbi)) == sizeof(mbi) && mbi.State == MEM_COMMIT) {
+            room = (unsigned int)((uintptr_t)mbi.BaseAddress + mbi.RegionSize - esp);
+        }
+    }
+#else
+    {
+        /* the stack mapping's end, from /proc/self/maps */
+        FILE *m = fopen("/proc/self/maps", "r");
+        char line[256];
+        while (m && fgets(line, sizeof(line), m)) {
+            unsigned long a, b;
+            if (sscanf(line, "%lx-%lx", &a, &b) == 2 && esp >= a && esp < b) {
+                room = (unsigned int)(b - esp);
+                break;
+            }
+        }
+        if (m) {
+            fclose(m);
+        }
+    }
+#endif
+    if (room < n) {
+        n = room;
+    }
+    fwrite("PECRASH1", 1, 8, f);
+    fwrite(hdr, 4, 3, f);
+    fwrite((const void *)(uintptr_t)esp, 1, n, f);
+    fwrite(zero, 1, 0x4000 - n, f); /* unreadable part as zeros */
+    fwrite((const void *)(uintptr_t)0x80000000u, 1, 0x200000, f);
+    fwrite((const void *)(uintptr_t)0x1F800000u, 1, 0x400, f);
+    fclose(f);
+    fprintf(stderr, "pe:   memory saved to crash-dump.bin\n");
+}
+
 static void crash_report(unsigned int eip, unsigned int esp, unsigned int ebp) {
     unsigned int i, *sp = (unsigned int *)(uintptr_t)esp;
     fprintf(stderr, "pe: crash report (frame %u): eip=0x%08X esp=0x%08X ebp=0x%08X\n", pe_host_frame_number(),
@@ -57,6 +107,7 @@ static void crash_report(unsigned int eip, unsigned int esp, unsigned int ebp) {
     fprintf(stderr, "\n");
     pe_host_cd_report();
     pe_host_overlays_report();
+    crash_dump(eip, esp, ebp);
     fflush(stderr);
 }
 
