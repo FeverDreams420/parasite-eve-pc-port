@@ -1,0 +1,18 @@
+--- a/src/main/akao/Akao_SampleBankUpload.c
++++ b/src/main/akao/Akao_SampleBankUpload.c
+@@ -15,9 +15,13 @@
+ 
+ int func_800851A8(void *arg0, int arg1);
+ 
+-void Spu_UploadSampleBlockBlocking(void *arg0, int arg1) {
+-    while (func_800851A8(arg0, arg1) == 1) {
++/* Host: the retail code returns the last func_800851A8 result (the loop's
++ * v0); CD_SectorReadFlow uses it. */
++int Spu_UploadSampleBlockBlocking(void *arg0, int arg1) {
++    int result;
++    while ((result = func_800851A8(arg0, arg1)) == 1) {
+     }
++    return result;
+ }
+ 
+ extern int D_8009D24C;

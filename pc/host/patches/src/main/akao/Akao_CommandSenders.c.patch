@@ -1,0 +1,18 @@
+--- a/src/main/akao/Akao_CommandSenders.c
++++ b/src/main/akao/Akao_CommandSenders.c
+@@ -1,9 +1,13 @@
+ #include "pe1/akao/commands.h"
+ 
+-void Akao_Cmd_10(int arg0) {
++/* Host: the retail code returns Akao_EnqueueStagedCommand's result (its
++ * jal is the last call before jr ra); CD_SeekToTrack and the item/sound task
++ * ops use it. */
++int Akao_EnqueueStagedCommand(void);
++int Akao_Cmd_10(int arg0) {
+     g_AkaoCmd.opcode = 0x10;
+     g_AkaoCmd.arg0.value = arg0;
+-    Akao_EnqueueStagedCommand();
++    return Akao_EnqueueStagedCommand();
+ }
+ 
+ void Akao_Cmd_11(int arg0) {

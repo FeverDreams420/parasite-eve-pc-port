@@ -1,0 +1,26 @@
+--- a/src/main/engine/FieldEng_QueryActiveNode.c
++++ b/src/main/engine/FieldEng_QueryActiveNode.c
+@@ -3,9 +3,12 @@
+ 
+ extern FieldAnimObjectPrefix *g_FieldEngineObject __asm__("D_800F32D0");
+ 
+-void Asset_Find08w(int arg0, int arg1, int arg2, int arg3, int arg4);
++int Asset_Find08w(int arg0, int arg1, int arg2, int arg3, int arg4);
+ 
+-void func_800D3F64(int arg0, int arg1) {
++/* Host: the retail code returns Asset_Find08w's result (the jal is its
++ * last instruction before jr ra), the handle of the positional sound it
++ * started; callers keep it to update or stop that sound. */
++int func_800D3F64(int arg0, int arg1) {
+     FieldAnimObjectPrefix *ctx;
+     register FieldActor *child asm("$3");
+     register RenderMatrix *node asm("$2");
+@@ -32,7 +35,7 @@
+     z = node->translation[2];
+     sz = z;
+     z = (short)z;
+-    Asset_Find08w(arg0, arg1, x, y, z);
++    return Asset_Find08w(arg0, arg1, x, y, z);
+ }
+ 
+ 

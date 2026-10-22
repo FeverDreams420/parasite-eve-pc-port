@@ -1,0 +1,24 @@
+--- a/src/overlays/room_m086_central_park/RoomEffect_BounceGlintFlow.c
++++ b/src/overlays/room_m086_central_park/RoomEffect_BounceGlintFlow.c
+@@ -128,7 +128,7 @@
+ extern s16 D_800F3378;
+ extern char D_8018EFF4[];
+ 
+-void func_800CE560(void *arg0, s32 arg1, s32 arg2, void *arg3);
++int func_800CE560(void *arg0, s32 arg1, s32 arg2, void *arg3);
+ void *func_800CE610(void *arg0);
+ void func_800CE8F0(void *arg0, s32 arg1, void *arg2, void *arg3);
+ s32 func_80071A54(void);
+@@ -173,8 +173,10 @@
+     ent->y = g_RoomFloorY->y;
+     value = func_800D3FD8();
+     func_800D3F64(0x579, value);
+-    func_800CE560(((void **)D_800F33E0)[2], 0x14, 0x18, func_801900CC);
+-    goto done;
++    /* Host: mode 0 returns the size func_800CE560 reports (retail: its jal
++     * is the last write of v0 on this path); the task system adds it to the
++     * effect's data cursor. */
++    return func_800CE560(((void **)D_800F33E0)[2], 0x14, 0x18, func_801900CC);
+ 
+ mode1:
+     value = D_800E27EC;
