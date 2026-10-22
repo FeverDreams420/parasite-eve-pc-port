@@ -66,8 +66,11 @@ int pe_psyq_DsQueueLen(void) { return 0; }
 int pe_psyq_DsStatus(void) { return DSL_STAT_STANDBY; }
 int pe_psyq_DsShellOpen(void) { return g_shell_count; }
 void pe_host_disc_shell_cycled(void) { g_shell_count++; }
-int pe_psyq_DsMix(void *vol) { (void)vol; return 1; }
-int pe_psyq_CdMix(void *vol) { (void)vol; return 1; }
+/* CD audio -> SPU attenuation (CdlATV: L->L, L->R, R->R, R->L), applied by
+ * PsyZ to the CD input it mixes (movie XA audio, stream.c). */
+int CD_vol(void *vol);
+int pe_psyq_DsMix(void *vol) { if (vol) CD_vol(vol); return 1; }
+int pe_psyq_CdMix(void *vol) { if (vol) CD_vol(vol); return 1; }
 
 int pe_psyq_DsGetDiskType(void) {
     unsigned char s[2048];
@@ -244,10 +247,13 @@ DslFILE *pe_psyq_DsSearchFile(DslFILE *fp, char *path) {
 static void *g_ready_cb;
 void pe_host_stream_setloc(const unsigned char *param);
 
+void pe_host_stream_control(unsigned char com, const unsigned char *param);
+
 int pe_psyq_DsControl(unsigned char com, unsigned char *param, unsigned char *result) {
     if (com == 0x02) { /* CdlSetloc */
         pe_host_stream_setloc(param);
     }
+    pe_host_stream_control(com, param);
     if (getenv("PE_LOG_CD")) {
         fprintf(stderr, "pe: DsControl 0x%02X (not implemented)\n", com);
     }

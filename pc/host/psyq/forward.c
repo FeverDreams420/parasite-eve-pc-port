@@ -200,6 +200,10 @@ static void sleep_1ms(void) {
 #endif
 static int g_last_vblank = -1;
 
+static unsigned g_vsync_cb_calls;
+unsigned pe_host_vsync_cb_calls(void);
+void pe_host_vsync_cb_reset(void);
+double pe_host_now_s(void);
 int pe_psyq_VSync(int mode) {
     int r, now, steps = 0, extra;
     if (mode < 0 || mode == 1) {
@@ -249,8 +253,16 @@ int pe_psyq_VSync(int mode) {
         by_mode[mode < 3 ? mode : 3]++;
         if (calls % 300 == 0) {
             vblanks = (unsigned)(now - start);
-            fprintf(stderr, "pe: vsync: %u calls (mode 0: %u, 2: %u, >2: %u), %.2f refreshes per call\n",
-                    calls, by_mode[0], by_mode[2], by_mode[3], (double)vblanks / 300.0);
+            {
+                static double t0;
+                double t = pe_host_now_s();
+                fprintf(stderr, "pe: vsync: %u calls (mode 0: %u, 2: %u, >2: %u), %.2f refreshes per call, "
+                                "%.1f VSync callbacks/s\n",
+                        calls, by_mode[0], by_mode[2], by_mode[3], (double)vblanks / 300.0,
+                        t0 > 0 ? (double)pe_host_vsync_cb_calls() / (t - t0) : 0.0);
+                pe_host_vsync_cb_reset();
+                t0 = t;
+            }
             start = now;
             memset(by_mode, 0, sizeof(by_mode));
         }
@@ -260,7 +272,10 @@ int pe_psyq_VSync(int mode) {
     return r;
 }
 static void (*g_vsync_func)(void);
+unsigned pe_host_vsync_cb_calls(void) { return g_vsync_cb_calls; }
+void pe_host_vsync_cb_reset(void) { g_vsync_cb_calls = 0; }
 static void vsync_wrap(void) {
+    g_vsync_cb_calls++;
     if (g_vsync_func) {
         g_vsync_func();
     }
@@ -376,7 +391,18 @@ u_long pe_psyq_SpuWrite(u_char *addr, u_long size) {
     spu_transfer_done();
     return r;
 }
-void pe_psyq_SpuSetCommonAttr(SpuCommonAttr *a) { pe_host_spu_sync(); SpuSetCommonAttr(a); pe_host_spu_sync(); }
+void pe_psyq_SpuSetCommonAttr(SpuCommonAttr *a) {
+    pe_host_spu_sync();
+    SpuSetCommonAttr(a);
+    pe_host_spu_sync();
+    if (getenv("PE_LOG_SPU")) {
+        volatile unsigned short *r = (volatile unsigned short *)(uintptr_t)0x1F801C00u;
+        fprintf(stderr, "pe: SpuSetCommonAttr mask %04lX cd vol %04X/%04X mix %ld -> SPUCNT %04X CD vol %04X/%04X\n",
+                (unsigned long)a->mask, (unsigned)(unsigned short)a->cd.volume.left,
+                (unsigned)(unsigned short)a->cd.volume.right, (long)a->cd.mix, r[0x1AA / 2], r[0x1B0 / 2],
+                r[0x1B2 / 2]);
+    }
+}
 long pe_psyq_SpuSetIRQ(long on) { return SpuSetIRQ(on); }
 SpuIRQCallbackProc pe_psyq_SpuSetIRQCallback(SpuIRQCallbackProc f) { return SpuSetIRQCallback(f); }
 long pe_psyq_SpuSetNoiseClock(long n) { long r; pe_host_spu_sync(); r = SpuSetNoiseClock(n); pe_host_spu_sync(); return r; }
@@ -390,7 +416,20 @@ long pe_psyq_SpuSetTransferMode(long mode) {
     return SpuSetTransferMode(mode);
 }
 unsigned long pe_psyq_SpuSetTransferStartAddr(unsigned long a) { return SpuSetTransferStartAddr(a); }
-void pe_psyq_SsInit(void) { SsInit(); }
+/* SsInit: in this game the function at the PSY-Q SsInit address
+ * (src/main/psyq/libsnd/ssinit_c.c) only starts the three game-time counters
+ * (game clock, play time); it does not reset the SPU. PsyZ's SsInit runs
+ * SpuInit, which cleared the CD audio enable and CD volume that
+ * Spu_InitHardware had just set (so movie audio was silent) and left the
+ * play-time clock stopped. Do what the retail code does. */
+void GameTime_InitCounter0(void);
+void GameTime_InitCounter1(void);
+void GameTime_InitCounter2(void);
+void pe_psyq_SsInit(void) {
+    GameTime_InitCounter0();
+    GameTime_InitCounter2();
+    GameTime_InitCounter1();
+}
 
 
 /* SpuSetReverbModeType (retail s_srmt.c sets the preset registers for the

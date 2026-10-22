@@ -16,7 +16,13 @@
  * (75 at single speed). A frame is handed out only once the virtual drive
  * would have read its last sector, so movies run at their recorded rate.
  *
- * Movie audio (XA sectors) is not played yet.
+ * Movie audio: with real-time audio on (mode bit 0x40, CdlModeRT), each XA
+ * audio sector read goes to PsyZ's CD input (Psyz_CdXaFeed), which decodes
+ * it (37800 Hz ADPCM) and plays it at the CdMix/DsMix volumes, as a drive
+ * sends XA audio straight to the SPU. With the XA filter on (mode bit 0x08,
+ * CdlModeSF) only the file/channel set by CdlSetfilt plays. In PE's movies
+ * one sector in 8 is audio (file 1, channel 1, stereo 37800 Hz 4-bit), which
+ * at double speed is exactly 37800 samples a second.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -24,6 +30,10 @@
 #include <string.h>
 
 #include "pe_host_disc.h"
+
+void Psyz_CdXaFeed(const unsigned char *sector);
+void Psyz_CdXaStop(void);
+unsigned Psyz_CdXaQueued(void);
 
 int pe_host_skip_key(void);
 
@@ -77,6 +87,8 @@ static double g_rate = 150.0;
 static int g_active;
 static int g_slot;
 static int g_end_frame = -1;
+static int g_mode;
+static unsigned char g_filter_file, g_filter_channel;
 
 /* StSetRing(ring, sectors) */
 void pe_psyq_StSetRing(uint32_t *ring, uint32_t sectors) {
@@ -88,6 +100,7 @@ void pe_psyq_StSetRing(uint32_t *ring, uint32_t sectors) {
 void pe_psyq_StUnSetRing(void) {
     g_ring = NULL;
     g_active = 0;
+    Psyz_CdXaStop();
 }
 
 /* StSetStream(mode, start_frame, end_frame, func1, func2) */
@@ -105,7 +118,9 @@ int pe_psyq_DsRead2(CdLoc *pos, int mode) {
     g_start_lba = g_lba;
     g_start_time = now_s();
     g_rate = (mode & 0x80) ? 150.0 : 75.0;
+    g_mode = mode;
     g_active = 1;
+    Psyz_CdXaStop(); /* a new stream: nothing of the last one still queued */
     if (getenv("PE_LOG_CD")) {
         fprintf(stderr, "pe: DsRead2 stream from sector %d (mode 0x%X)\n", g_lba, mode);
     }
@@ -137,11 +152,25 @@ int pe_psyq_StGetNext(uint32_t **data, uint32_t **header) {
         uint32_t fn;
         if (pe_host_disc_read_raw(g_lba, raw) != 0) {
             g_active = 0;
+            Psyz_CdXaStop();
             return 1;
         }
         g_lba++;
         if (raw[18] & 0x04) {
-            continue; /* XA audio sector */
+            /* XA audio sector: to the CD input when real-time audio is on
+             * and the filter (if set) matches. */
+            if ((g_mode & 0x40) &&
+                (!(g_mode & 0x08) || (raw[16] == g_filter_file && raw[17] == g_filter_channel))) {
+                Psyz_CdXaFeed(raw);
+                if (getenv("PE_LOG_XA")) {
+                    static unsigned n;
+                    if (n++ % 20 == 0) {
+                        fprintf(stderr, "pe: XA sector %d, %u frames queued (%.0f ms)\n", g_lba - 1,
+                                Psyz_CdXaQueued(), Psyz_CdXaQueued() / 37.8);
+                    }
+                }
+            }
+            continue;
         }
         magic = (uint16_t)(ud[0] | ud[1] << 8);
         type = (uint16_t)(ud[2] | ud[3] << 8);
@@ -184,6 +213,7 @@ int pe_psyq_StGetNext(uint32_t **data, uint32_t **header) {
         slot[9] = 0x7F;
         slot[10] = 0;
         slot[11] = 0;
+        Psyz_CdXaStop();
     } else {
         wait_for_sector(g_lba - 1);
     }
@@ -208,6 +238,17 @@ int pe_psyq_StGetBackloc(CdLoc *loc) {
 }
 
 void pe_psyq_StCdInterrupt(void) {}
+
+/* DsControl commands that matter to the stream's audio: CdlSetfilt (0x0D,
+ * file and channel), CdlStop (0x08) / CdlPause (0x09) end what plays. */
+void pe_host_stream_control(unsigned char com, const unsigned char *param) {
+    if (com == 0x0D && param) {
+        g_filter_file = param[0];
+        g_filter_channel = param[1];
+    } else if (com == 0x08 || com == 0x09) {
+        Psyz_CdXaStop();
+    }
+}
 
 /* DsControl(CdlSetloc) points the next DsRead2 at a position. */
 void pe_host_stream_setloc(const unsigned char *param) {
@@ -235,3 +276,6 @@ DmaCallback pe_psyq_DMACallback(int channel, DmaCallback f) {
     }
     return old;
 }
+
+/* Wall clock for other host code (forward.c's VSync log). */
+double pe_host_now_s(void) { return now_s(); }

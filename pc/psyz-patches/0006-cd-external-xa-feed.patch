@@ -1,0 +1,176 @@
+diff --git a/psyz/include/psyz/cd.h b/psyz/include/psyz/cd.h
+index 0a360b2..7167bac 100644
+--- a/psyz/include/psyz/cd.h
++++ b/psyz/include/psyz/cd.h
+@@ -56,6 +56,14 @@ void Psyz_CdShellOpen(int is_open);
+  */
+ size_t Psyz_CdPullSamples(short* out, size_t num_frames);
+ 
++// External real-time XA source (libcd.c): a port that reads the disc itself
++// passes each 2352-byte XA audio sector it reads; it plays through the CD
++// input. Psyz_CdXaStop drops what is queued and ends it.
++void Psyz_CdXaFeed(const unsigned char* sector);
++void Psyz_CdXaStop(void);
++// Frames (37800 Hz) queued by Psyz_CdXaFeed and not played yet.
++unsigned Psyz_CdXaQueued(void);
++
+ /**
+  * @brief Set callback invoked when a disk read is triggered
+  *
+diff --git a/psyz/src/psyz/libcd.c b/psyz/src/psyz/libcd.c
+index c783fb2..d5970de 100644
+--- a/psyz/src/psyz/libcd.c
++++ b/psyz/src/psyz/libcd.c
+@@ -702,12 +702,151 @@ end:
+     return written;
+ }
+ 
++// External real-time XA source. A port that reads the disc itself, instead
++// of through this libcd (CD streaming for movies, for example), hands each
++// XA audio sector it reads to Psyz_CdXaFeed; the decoded 37800 Hz samples
++// are queued and played through the CD input like the XA player above, with
++// the same decoder, resampler and CdMix volumes. Psyz_CdXaStop ends it.
++#define XA_EXT_FIFO_FRAMES 32768 // power of 2, about 0.87 s at 37800 Hz
++static struct {
++    short fifo[XA_EXT_FIFO_FRAMES * 2];
++    unsigned rd, count;
++    int old_l, older_l, old_r, older_r;
++    short rh_l[4], rh_r[4];
++    unsigned phase;
++    int primed;
++    int active;
++} xa_ext;
++
++void Psyz_CdXaFeed(const unsigned char* sector) {
++    static short dec[XA_DECODED_MAX_FRAMES * 2];
++    short mono[XA_DECODED_MAX_FRAMES];
++    const unsigned char* user = &sector[0x18];
++    const unsigned char ci = sector[0x13];
++    int frames = 0, stereo = (ci & 0x03) == 1, half = (ci & 0x04) != 0;
++    if ((ci & 0x30) != 0) {
++        LOG_ONCE("XA: 8-bit XA not supported, decoding as 4-bit");
++    }
++    Psyz_AudioLock();
++    for (int i = 0; i < 18; i++) {
++        const unsigned char* block = user + i * 128;
++        for (int sub = 0; sub < 4; sub++) {
++            if (stereo) {
++                xa_decode_28(block, sub, 0, &dec[frames * 2 + 0], 2,
++                             &xa_ext.old_l, &xa_ext.older_l);
++                xa_decode_28(block, sub, 1, &dec[frames * 2 + 1], 2,
++                             &xa_ext.old_r, &xa_ext.older_r);
++                frames += 28;
++            } else {
++                xa_decode_28(block, sub, 0, &mono[frames], 1, &xa_ext.old_l,
++                             &xa_ext.older_l);
++                frames += 28;
++                xa_decode_28(block, sub, 1, &mono[frames], 1, &xa_ext.old_l,
++                             &xa_ext.older_l);
++                frames += 28;
++            }
++        }
++    }
++    if (!stereo) {
++        for (int i = 0; i < frames; i++) {
++            dec[i * 2 + 0] = dec[i * 2 + 1] = mono[i];
++        }
++    }
++    // 18900 Hz sectors: each sample twice, so the 37800 Hz path plays them
++    for (int rep = 0, i = 0; i < frames; rep = !rep) {
++        if (xa_ext.count < XA_EXT_FIFO_FRAMES) {
++            unsigned w = (xa_ext.rd + xa_ext.count) & (XA_EXT_FIFO_FRAMES - 1);
++            xa_ext.fifo[w * 2 + 0] = dec[i * 2 + 0];
++            xa_ext.fifo[w * 2 + 1] = dec[i * 2 + 1];
++            xa_ext.count++;
++        }
++        if (!half || rep) {
++            i++;
++        }
++    }
++    xa_ext.active = 1;
++    Psyz_AudioUnlock();
++}
++
++unsigned Psyz_CdXaQueued(void) { return xa_ext.count; }
++
++void Psyz_CdXaStop(void) {
++    Psyz_AudioLock();
++    memset(&xa_ext, 0, sizeof(xa_ext));
++    Psyz_AudioUnlock();
++}
++
++static int xa_ext_advance(void) {
++    if (xa_ext.count == 0) {
++        return 0;
++    }
++    short l = xa_ext.fifo[xa_ext.rd * 2 + 0];
++    short r = xa_ext.fifo[xa_ext.rd * 2 + 1];
++    xa_ext.rd = (xa_ext.rd + 1) & (XA_EXT_FIFO_FRAMES - 1);
++    xa_ext.count--;
++    memmove(&xa_ext.rh_l[0], &xa_ext.rh_l[1], 3 * sizeof(short));
++    memmove(&xa_ext.rh_r[0], &xa_ext.rh_r[1], 3 * sizeof(short));
++    xa_ext.rh_l[3] = l;
++    xa_ext.rh_r[3] = r;
++    return 1;
++}
++
++// Like xa_pull_samples, from the queue; stops early when the queue runs dry.
++// The feeder runs on the system clock and the output on the sound device's,
++// so the read step is nudged (at most 1%, a sixth of a semitone) to hold
++// about 0.1 s queued instead of drifting away from the picture.
++#define XA_EXT_TARGET_FRAMES 4032
++static size_t xa_ext_pull_samples(short* buf, size_t max_frames) {
++    size_t written = 0;
++    unsigned step;
++    Psyz_AudioLock();
++    {
++        int diff = (int)xa_ext.count - XA_EXT_TARGET_FRAMES;
++        int adj = (int)((long long)XA_STEP_Q16 * diff / (XA_EXT_TARGET_FRAMES * 50));
++        int lim = XA_STEP_Q16 / 100;
++        if (adj > lim) adj = lim;
++        if (adj < -lim) adj = -lim;
++        step = (unsigned)((int)XA_STEP_Q16 + adj);
++    }
++    if (!xa_ext.primed) {
++        // wait for a few frames so y0..y2 of the Hermite ring are real samples
++        if (xa_ext.count < 4) {
++            goto end;
++        }
++        for (int i = 0; i < 3; i++) {
++            xa_ext_advance();
++        }
++        xa_ext.primed = 1;
++    }
++    while (written < max_frames) {
++        while (xa_ext.phase >= 0x10000) {
++            if (!xa_ext_advance()) {
++                goto end;
++            }
++            xa_ext.phase -= 0x10000;
++        }
++        buf[written * 2 + 0] = hermite4(xa_ext.rh_l[0], xa_ext.rh_l[1],
++                                        xa_ext.rh_l[2], xa_ext.rh_l[3],
++                                        xa_ext.phase);
++        buf[written * 2 + 1] = hermite4(xa_ext.rh_r[0], xa_ext.rh_r[1],
++                                        xa_ext.rh_r[2], xa_ext.rh_r[3],
++                                        xa_ext.phase);
++        xa_ext.phase += step;
++        written++;
++    }
++end:
++    Psyz_AudioUnlock();
++    return written;
++}
++
+ size_t Psyz_CdPullSamples(short* out, size_t num_frames) {
+     size_t read_frames;
+     Psyz_AudioLock();
+     u_char mode = CD_mode;
+     Psyz_AudioUnlock();
+-    if (mode & CdlModeDA) {
++    if (xa_ext.active) {
++        read_frames = xa_ext_pull_samples(out, num_frames);
++    } else if (mode & CdlModeDA) {
+         read_frames = cdda_pull_samples(out, num_frames);
+     } else if (mode & CdlModeRT) {
+         read_frames = xa_pull_samples(out, num_frames);
