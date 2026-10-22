@@ -1,88 +1,65 @@
 # Roadmap
 
-The goal: Parasite Eve as a **standalone, fully native PC game**. No emulation
-and no memory cards. Every mod and graphics option lives in the game's own
-settings menu, it plays in widescreen, and you can save from the menu whenever
-you want. It must stay as faithful to the original as possible: no replaced
-textures or backgrounds.
+What I want in the end: Parasite Eve as a standalone, fully native PC game.
+No emulation, no memory card files, every option in the game's own settings
+menu, widescreen, and saving from the menu whenever you want. It should stay as
+close to the original as possible, so no replaced textures or backgrounds.
 
-Status key: ✅ done · 🔧 in progress · ⬜ not started
+✅ done · 🔧 in progress · ⬜ not started
 
-## How we got here
+## Before this
 
-Before this native port, the game was brought up as a static recompilation
-with PSXRecomp in a separate project (not in this repository). That work got
-the game playing on PC up to and past the Disc 1 to Disc 2 change, and gave the
-first mod: a **seamless disc switch** that changes from Disc 1 to Disc 2
-by itself, with the "insert disc 2" screen kept black and no on-screen prompt.
-The native port is a fresh start meant to remove the emulation layer
-completely.
+I first got the game running on PC as a static recompilation with PSXRecomp,
+in a separate project that isn't in this repo. That version played past the
+switch to Disc 2 and had my first mod: a seamless disc switch that goes from
+Disc 1 to Disc 2 on its own, with no "insert disc 2" prompt. This native port
+is a fresh start to get rid of the emulation layer completely.
 
-## Phase 1 — every function as C, boot to the title ✅
+## 1. Every function as C, boot to the title ✅
 
-- ✅ All game C from the decomp compiled for 32-bit x86 (main executable and all
-  190 overlays), with every hand-written MIPS routine translated to C.
-- ✅ PS1 memory at its original addresses, jumps at every original function
-  address, overlays recognised and checked against the disc (SHA-1).
-- ✅ PSY-Q replaced: graphics, SPU, CD (reading `.cue`/`.bin`), controllers,
-  memory cards (`.mcd`), software movie decoder (MDEC), CD streaming.
-- ✅ Publisher screen, opening movie, title screen, title menu.
-- ✅ Windows build (mingw-w64), tested on one real PC with an Xbox 360 pad.
+- ✅ All of the decomp's game C compiled for 32-bit x86 (main exe and all 190
+  overlays), with the hand-written MIPS routines translated to C
+- ✅ PS1 memory at its real addresses, jumps at every original function,
+  overlays checked against the disc
+- ✅ PSY-Q replaced: graphics, sound, CD, controllers, memory cards, movie
+  decoding
+- ✅ Windows build, running on my PC with an Xbox 360 pad
 
-## Phase 2 — fully playable Disc 1 🔧
+## 2. Fully playable Disc 1 🔧
 
-- ✅ New Game movie, first scene outside Carnegie Hall, name entry.
-- ✅ The opera house, the first battles, the sewers and their bosses, to the
-  end of Day 3 (played on one PC).
-- 🔧 The rest of Disc 1 (Day 4 onward), fixing whatever breaks.
-- 🔧 Movie audio: plays (XA ADPCM sectors to the SPU's CD input); lip sync on
-  long movies still to be checked, it may drift for now.
-- ✅ Play-time clock runs (it had stayed stopped).
-- 🔧 Music and sound effects: playing; effects that repeated are being fixed.
-- ✅ Saving and loading through the memory-card path (`.mcd` files; existing
-  emulator cards work).
-- ✅ Character shadows without coloured streaks (texture reads kept inside
-  each polygon's own texture area).
-- ⬜ Values the game reads from PS1 kernel RAM through NULL pointers: find out
-  what the real console holds there, if it matters anywhere.
+- ✅ Start of the game through the end of Day 3
+- ✅ Saving and loading (`.mcd` files, emulator cards work)
+- ✅ Play-time clock
+- ✅ Character shadows without coloured streaks
+- 🔧 Movie sound works, lip sync still needs checking on a long cutscene
+- 🔧 Sound effects that kept repeating: fix done, needs a battle test
+- 🔧 Day 4 to the end of Disc 1
 
-## Phase 3 — Disc 2 and no disc change ⬜
+## 3. Disc 2 without a disc change ⬜
 
-- ⬜ Read both disc images and route each read to the right one.
-- ⬜ Find how the game decides which disc is in, and answer it without the
-  "insert disc 2" screen ever appearing (the native version of the PSXRecomp
-  mod).
-- ⬜ Play through Disc 2.
+- ⬜ Read both disc images and send each read to the right one
+- ⬜ Skip the "insert disc 2" screen entirely (the native version of my
+  PSXRecomp mod)
+- ⬜ Play through Disc 2
 
-## Phase 4 — a PC game, not a PS1 game ⬜
+## 4. A PC game, not a PS1 game ⬜
 
-- 🔧 Save from the menu at any time: a **Save Game** entry at the bottom of
-  the in-game menu (and F5) opens the save screen wherever the menu can open.
-  Loading puts Aya at the room's start point, since the game's save does not
-  store her position; restoring the exact spot is next.
-- ⬜ Native saves without memory card files.
-- ⬜ In-game settings menu holding every mod and graphics option.
-- ⬜ Controller remapping, Xbox button icons, keyboard and mouse.
-- ⬜ Brightness and contrast settings.
-- ⬜ A one-click build, and a release that only needs the player's own disc.
+- 🔧 Save anywhere: **Save Game** in the menu (and F5) works. Next is putting
+  Aya back exactly where she was when you load.
+- ⬜ Native saves with no memory card files
+- ⬜ In-game settings menu for every mod and graphics option
+- ⬜ Controller remapping, Xbox button icons, keyboard and mouse
+- ⬜ Brightness and contrast
+- ⬜ One-click build, and a release that only needs your own disc
 
-## Phase 5 — graphics, staying faithful ⬜
+## 5. Graphics, staying faithful ⬜
 
 In this order:
 
-1. ⬜ Higher internal resolution for the 3D, text and effects (PsyZ already has
-   a setting for it). Pre-rendered backgrounds stay as they are.
-2. ⬜ Smooth geometry: keep the extra precision from the geometry (GTE) math
-   so models stop wobbling (like PGXP in emulators). This may also fix limbs
-   that don't line up.
-3. ⬜ Widescreen. The 3D can be widened; the pre-rendered backgrounds are 4:3
-   and have nothing past their edges, so how the sides are filled, without
-   replacing any art, is still open.
-4. ⬜ Possibly, a fully native renderer drawing the game's models directly,
-   replacing the PS1 graphics-command layer. Last, and only if 1–3 aren't
-   enough.
-
-## Help wanted
-
-PS1 audio (XA/SPU), PS1 graphics and GTE precision, and play-testing with your
-own disc. See the README.
+1. ⬜ Higher internal resolution for 3D, text and effects. The pre-rendered
+   backgrounds stay as they are.
+2. ⬜ Smooth geometry so models stop wobbling (like PGXP in emulators).
+3. ⬜ Widescreen. The 3D can be widened, but the backgrounds are 4:3 with
+   nothing past the edges, so I still need to figure out how to fill the sides
+   without replacing any art.
+4. ⬜ Maybe a fully native renderer, only if 1 to 3 aren't enough.
