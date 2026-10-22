@@ -84,6 +84,7 @@ static void write_ppm(const char *path, const unsigned char *rgb, int w, int h) 
  * VSync save the picture and video memory. */
 void pe_host_snapshot_gpu_begin(unsigned int frame);
 void pe_host_snapshot_gpu_end(void);
+unsigned int pe_host_snapshot_gpu_packets(void);
 static int g_snap_state; /* 0 idle, 1 requested, 2 recording */
 void pe_host_snapshot_request(void) {
     if (g_snap_state == 0) {
@@ -91,7 +92,7 @@ void pe_host_snapshot_request(void) {
     }
 }
 static void snapshot_step(void) {
-    if (g_snap_state == 2) {
+    if (g_snap_state == 2 && pe_host_snapshot_gpu_packets() != 0) {
         char path[64];
         int w, h;
         unsigned char *rgb;

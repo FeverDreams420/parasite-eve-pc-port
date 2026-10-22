@@ -61,7 +61,10 @@ static void gpu_log_flush_frame(void) {
 }
 /* F12 snapshot (hotkeys.c): every packet of one frame goes to a file. */
 static FILE *g_snap_file;
-static unsigned int g_snap_frame;
+static unsigned int g_snap_frame, g_snap_packets;
+/* Packets recorded so far; the snapshot waits for a frame that drew some
+ * (VSync can be called more than once per game frame). */
+unsigned int pe_host_snapshot_gpu_packets(void) { return g_snap_packets; }
 void pe_host_snapshot_gpu_begin(unsigned int frame) {
     char path[64];
     if (g_snap_file) {
@@ -70,6 +73,7 @@ void pe_host_snapshot_gpu_begin(unsigned int frame) {
     snprintf(path, sizeof(path), "snapshot-%05u-gpu.txt", frame);
     g_snap_file = fopen(path, "w");
     g_snap_frame = frame;
+    g_snap_packets = 0;
 }
 void pe_host_snapshot_gpu_end(void) {
     if (g_snap_file) {
@@ -95,6 +99,7 @@ static void push_packet(const uint32_t *p) {
     }
     if (g_snap_file) {
         uint32_t k;
+        g_snap_packets++;
         for (k = 1; k <= len; k++) {
             fprintf(g_snap_file, "%08X%c", p[k], k == len ? '\n' : ' ');
         }
