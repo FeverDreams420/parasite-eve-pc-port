@@ -4,7 +4,7 @@
  #include "menu_memcard_fade.h"
  
 +/* Host version, read off the retail instructions at the address the game
-+ * runs this from (0x80192FE8; see pc/PROGRESS.md "Title screen"). The
++ * runs this from (0x80192FE8). The
 + * retail `j 0x80193024` is the join of the if/else below; the decomp links
 + * this piece 0x4C lower, where that address is the epilogue, so its C
 + * returned early and never advanced the fade. */

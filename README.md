@@ -12,7 +12,6 @@ You can save from the in-game menu. Day 4 onward and Disc 2 haven't been tested
 yet.
 
 - [ROADMAP.md](ROADMAP.md): where this is going
-- [pc/PROGRESS.md](pc/PROGRESS.md): technical notes and the bugs fixed so far
 
 ## You need your own game
 
@@ -96,8 +95,23 @@ build/pc-link-win32/parasite-eve.exe "Parasite Eve (USA) (Disc 1).cue"
 ```
 
 `setup-tree.sh` downloads the decomp, adds this repo's files on a `native`
-branch and applies the PsyZ patches. The workarounds my build machine needed
-and the Linux build flags are in [pc/PROGRESS.md](pc/PROGRESS.md).
+branch and applies the PsyZ patches.
+
+Build machine notes (Ubuntu 24.04):
+
+1. `apt-get install binutils-mipsel-linux-gnu gcc-multilib g++-multilib gcc-mingw-w64-i686`,
+   then link each `mipsel-linux-gnu-*` tool as `mipsel-none-elf-*` in a folder on
+   your PATH (`tools/scripts/setup_linker.sh` needs ftp.gnu.org).
+2. Python: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
+3. Run `tools/scripts/setup_stock_cc1.sh`, `setup_stock_cc281.sh` and `setup_maspsx.sh`.
+4. `export PE_CPP=$PWD/tools/old-gcc/cpp`.
+5. `make build`. Five PSY-Q objects need old GAS from ftp.gnu.org and don't
+   build, which doesn't matter because the PC build replaces PSY-Q.
+6. Linux build of PsyZ: `cmake -S pc -B build/pc-i686 -G Ninja
+   -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-m32 -DCMAKE_CXX_FLAGS=-m32
+   -DCMAKE_EXE_LINKER_FLAGS=-m32`, plus `-DSDL_X11=OFF -DSDL_WAYLAND=OFF
+   -DSDL_UNIX_CONSOLE_BUILD=ON` on a headless machine. Then
+   `tools/pc/build_all.sh` (PE_TARGET=linux is the default).
 
 If it crashes, the log gets a report and `crash-dump.bin` holds the game's
 memory. That file contains game data, so please don't post it publicly.
