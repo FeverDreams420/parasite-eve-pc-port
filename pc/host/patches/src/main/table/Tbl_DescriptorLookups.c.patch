@@ -1,0 +1,34 @@
+--- a/src/main/table/Tbl_DescriptorLookups.c
++++ b/src/main/table/Tbl_DescriptorLookups.c
+@@ -9,7 +9,21 @@
+ 
+ extern int g_StrLookupTableOffset;
+ 
++/* Host: widget mode 0x2B, unused by the game (both its descriptors are zero),
++ * is the Graphics popup of Set User Preferences (Menu_CreateMainMenuView.c):
++ * placed like the Sound / Cursor popups, one row lower per row (Graphics is
++ * row 4), sized like the Cursor one (modes 0x21 and 0x23). */
++static MenuWidgetSimpleDescriptor pe_graphics_popup_window = {100, 96, 72, 36};
++static MenuWidgetGridDescriptor pe_graphics_popup_list = {2, 2, 1, 2, 2, 68, 16, 0};
++/* The Borders popup (row 5) uses the same mode, one row lower; which one is
++ * open is pe_host_menu_popup_kind (set by Menu_CreateMainMenuView.c). */
++static MenuWidgetSimpleDescriptor pe_borders_popup_window = {100, 112, 72, 36};
++int pe_host_menu_popup_kind;
++
+ MenuWidgetSimpleDescriptor *MenuWidget_LookupSimpleDescriptor(unsigned int index) {
++    if (index == 0x2B) {
++        return pe_host_menu_popup_kind ? &pe_borders_popup_window : &pe_graphics_popup_window;
++    }
+     if (index >= 0x41) {
+         return 0;
+     }
+@@ -17,6 +31,9 @@
+ }
+ 
+ MenuWidgetGridDescriptor *MenuWidget_LookupGridDescriptor(unsigned int index) {
++    if (index == 0x2B) {
++        return &pe_graphics_popup_list;
++    }
+     if (index >= 0x41) {
+         return 0;
+     }

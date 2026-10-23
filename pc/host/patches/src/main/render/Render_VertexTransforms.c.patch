@@ -1,0 +1,75 @@
+--- a/src/main/render/Render_VertexTransforms.c
++++ b/src/main/render/Render_VertexTransforms.c
+@@ -13,6 +13,16 @@
+ #define U32_AT(ptr, off) (*(u32 *)((u8 *)(ptr) + (off)))
+ #define PTR_AT(ptr, off) (*(u8 **)((u8 *)(ptr) + (off)))
+ 
++/* PC port: precise animation for HD (pc/host/psyq/precise_anim.c) */
++void pe_host_pa_begin(const int *root);
++void pe_host_pa_push(void);
++void pe_host_pa_pop(void);
++void pe_host_pa_local(const int *src);
++void pe_host_pa_child(const int *dst, int use_src, const int *vec);
++void pe_host_pa_project(const int *view, const int *part);
++void pe_host_pa_end(void);
++void pe_host_pa_stored(const unsigned *screen, const unsigned *table);
++
+ #define Render_XformLoadRotMatrix(matrix) gte_ldrotmatrix((matrix))
+ 
+ #define Render_XformLoadTrans(matrix) gte_ldtransmatrix((matrix))
+@@ -248,6 +258,7 @@
+     out_vertices = PTR_AT(actor, 0x80);
+ 
+     Render_XformLoadFullMatrix(current_matrix);
++    pe_host_pa_begin((const int *)current_matrix);
+     header = PTR_AT(actor, 0);
+     part_count = U16_AT(header, 0x18);
+     i = 0;
+@@ -256,6 +267,7 @@
+             command = S8_AT(commands, 0);
+             if (command == -1) {
+                 Render_XformStoreFullMatrix(stack_top);
++                pe_host_pa_push();
+                 stack_top += 8;
+                 continue;
+             }
+@@ -263,6 +275,7 @@
+             if (command == -2) {
+                 stack_top -= 8;
+                 Render_XformLoadFullMatrix(stack_top);
++                pe_host_pa_pop();
+                 continue;
+             }
+ 
+@@ -271,7 +284,9 @@
+                 u8 *matrixBase = PTR_AT(actor, 0x58);
+                 src_matrix = (s32 *)(matrixBase + byteOffset);
+             }
++            pe_host_pa_local((const int *)src_matrix);
+             Render_XformBuildChildMatrix(src_matrix, (s32 *)out_matrix, command == 0);
++            pe_host_pa_child((const int *)out_matrix, command == 0, (const int *)zero0);
+ 
+             Render_XformLoadFullMatrix((s32 *)out_matrix);
+             out_matrix += 0x20;
+@@ -588,6 +603,7 @@
+                 asm volatile("" : "=r"(part) : "0"(part) : "memory");
+                 Morph_Compose(view, matrix, scratch);
+                 MorphLoadFullMatrix(scratch);
++                pe_host_pa_project((const int *)view, (const int *)matrix);
+                 matrix += 8;
+                 if (part->visible == 1) {
+                     int j = 0;
+@@ -635,6 +651,7 @@
+                             gte_swc2_17_0(depth);
+                             gte_swc2_18_4(depth);
+                             gte_swc2_19_8(depth);
++                            pe_host_pa_stored((const unsigned *)screen, (const unsigned *)D_800B1638);
+                         } while (j < part->vertex_count);
+                     }
+                 }
+@@ -643,4 +660,5 @@
+             } while (i < entity->header->part_count);
+         }
+     }
++    pe_host_pa_end();
+ }

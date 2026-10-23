@@ -64,6 +64,8 @@ Xbox-style controllers work (I use an Xbox 360 pad).
 | F5 | same thing, as a shortcut |
 | ` / ~ | skip the current movie |
 | Tab (hold) | fast forward |
+| F4 | fullscreen on / off |
+| Shift+F4 | borderless window one line shorter than the screen (fallback if fullscreen stutters) |
 | F12 | snapshot for bug reports (drawing commands, picture, video memory) |
 
 Memory cards go in `memcards/card1.mcd` and `card2.mcd` next to the exe. They're

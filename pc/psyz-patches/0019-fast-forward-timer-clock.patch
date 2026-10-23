@@ -1,0 +1,131 @@
+diff --git a/psyz/src/psyz/kernel.c b/psyz/src/psyz/kernel.c
+index e41a2f0..730bef2 100644
+--- a/psyz/src/psyz/kernel.c
++++ b/psyz/src/psyz/kernel.c
+@@ -125,6 +125,25 @@ static long rcnt_auto_ack[4] = {1, 1, 1, 1};
+ static RootCounter counters[3];
+ static AtomicTime poll_deadline_us;
+ 
++// The timers' clock (Psyz_KernelSetVBlankClock): normally the host's
++// microseconds (plus an offset kept across switches); while a port runs the
++// game faster than real time it can switch to one blank's worth of time per
++// Psyz_KernelVBlank, so timer-driven code (a sound driver) keeps pace with
++// the game instead of falling behind it.
++static AtomicWord clock_vblank;
++static AtomicTime clock_offset_us, clock_vblank_us;
++static unsigned clock_frac;
++// timer ticks fired and blanks so far (debug and the port's sound watchdog)
++static unsigned timer_ticks[3], vblank_count;
++unsigned Psyz_KernelTimerTicks(int i) { return i >= 0 && i < 3 ? timer_ticks[i] : 0; }
++unsigned Psyz_KernelVBlankCount(void) { return vblank_count; }
++static uint64_t KernelNowUs(void) {
++    if (AtomicLoad(&clock_vblank)) {
++        return AtomicTimeLoad(&clock_vblank_us);
++    }
++    return Psyz_OsNowUs() + AtomicTimeLoad(&clock_offset_us);
++}
++
+ static PendingEvent pending[32];
+ static int pending_len;
+ 
+@@ -294,10 +313,33 @@ void Psyz_KernelPost(void (*fn)(void)) {
+ }
+ 
+ void Psyz_KernelVBlank(void) {
++    vblank_count++;
++    if (AtomicLoad(&clock_vblank)) {
++        // one NTSC blank: 1001000 / 60 us = 16683 1/3
++        clock_frac += 1;
++        uint64_t add = 16683 + (clock_frac % 3 == 0 ? 1 : 0);
++        AtomicTimeStore(&clock_vblank_us, AtomicTimeLoad(&clock_vblank_us) + add);
++    }
+     Psyz_KernelPoll();
+     LatchLine(IRQ_VBLANK);
+ }
+ 
++void Psyz_KernelSetVBlankClock(int on) {
++    uint64_t now = KernelNowUs();
++    on = on != 0;
++    if (on == (int)AtomicLoad(&clock_vblank)) {
++        return;
++    }
++    if (on) {
++        AtomicTimeStore(&clock_vblank_us, now);
++        AtomicStore(&clock_vblank, 1);
++    } else {
++        // carry on from where blank time got to: never back in time
++        AtomicTimeStore(&clock_offset_us, now - Psyz_OsNowUs());
++        AtomicStore(&clock_vblank, 0);
++    }
++}
++
+ void PS1_EnterCriticalSection(void) {
+     if (OwnsKernel()) {
+         return; // already in one, or inside an interrupt handler
+@@ -480,7 +522,7 @@ static void CounterRestart(RootCounter* c, uint64_t now_us) {
+ static int ServiceTimers(uint64_t* deadline_us) {
+     int triggered = 0;
+     KernelLock();
+-    uint64_t now = Psyz_OsNowUs();
++    uint64_t now = KernelNowUs();
+     in_interrupt = 1;
+     for (int i = 0; i < LEN(counters); i++) {
+         RootCounter* c = &counters[i];
+@@ -492,6 +534,7 @@ static int ServiceTimers(uint64_t* deadline_us) {
+             CounterRestart(c, now);
+         }
+         while (IsDue(c->next_us, now)) {
++            timer_ticks[i]++;
+             CounterStep(c);
+             if (irq_mask & bit) {
+                 ServiceLine(IRQ_RCNT0 + i);
+@@ -519,9 +562,12 @@ static void IrqThread(void) {
+             Psyz_OsBellWait(bell_irq, PSYZ_OS_FOREVER);
+             continue;
+         }
+-        uint64_t now = Psyz_OsNowUs();
++        uint64_t now = KernelNowUs();
+         if (deadline > now) {
+             uint64_t left = deadline - now;
++            if (AtomicLoad(&clock_vblank) && left > 4000) {
++                left = 4000; // time only moves with blanks; Psyz_KernelPoll serves them too
++            }
+             Psyz_OsBellWait(bell_irq,
+                 (uint32_t)(left < INT32_MAX ? left : INT32_MAX));
+         }
+@@ -539,7 +585,7 @@ static void StartIrqThread(void) {
+ void Psyz_KernelPoll(void) {
+     uint64_t deadline;
+     if (!irq_thread_state || OwnsKernel() ||
+-        !IsDue(AtomicTimeLoad(&poll_deadline_us), Psyz_OsNowUs())) {
++        !IsDue(AtomicTimeLoad(&poll_deadline_us), KernelNowUs())) {
+         return;
+     }
+     ServiceTimers(&deadline);
+@@ -567,7 +613,7 @@ long SetRCnt(long spec, unsigned short target, long mode) {
+     }
+     c->ticks_per_us_q15 = clock / 15625 * 512 + clock % 15625 * 512 / 15625;
+     c->irq = (mode & RCntMdINTR) != 0;
+-    CounterRestart(c, Psyz_OsNowUs());
++    CounterRestart(c, KernelNowUs());
+     AtomicTimeStore(&poll_deadline_us, c->last_us);
+     KernelUnlock();
+     Psyz_OsBellRing(bell_irq);
+@@ -583,7 +629,7 @@ long GetRCnt(long spec) {
+     RootCounter* c = &counters[i];
+     long value = 0;
+     if (c->period_us) {
+-        uint32_t phase = (Psyz_OsNowUs() - c->last_us) % c->period_us;
++        uint32_t phase = (uint32_t)((KernelNowUs() - c->last_us) % c->period_us);
+         uint32_t ticks = phase * c->ticks_per_us_q15 >> 15;
+         value = (long)(ticks < c->target ? ticks : c->target - 1);
+     }
+@@ -597,7 +643,7 @@ long ResetRCnt(long spec) {
+         return 0;
+     }
+     KernelLock();
+-    CounterRestart(&counters[i], Psyz_OsNowUs());
++    CounterRestart(&counters[i], KernelNowUs());
+     AtomicTimeStore(&poll_deadline_us, counters[i].last_us);
+     KernelUnlock();
+     Psyz_OsBellRing(bell_irq);

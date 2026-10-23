@@ -138,8 +138,11 @@ static void spu_sync_locked(void) {
 /* Watchdog for sounds that never end: a voice still sounding 10 s after its
  * key-on (and not keyed off since) is reported once in the log, with its
  * addresses, to find looping effect sounds. Long music notes can show up too.
- * Pitch-0 voices (held silent by the driver) are not reported. */
-unsigned int pe_host_frame_number(void);
+ * Pitch-0 voices (held silent by the driver) are not reported. The 10 s are
+ * the sound driver's own time (2400 ticks of its 240 Hz timer, root counter
+ * 2), so fast forward does not report sounds that are simply not done yet. */
+unsigned Psyz_KernelTimerTicks(int i);
+#define pe_host_frame_number() Psyz_KernelTimerTicks(2)
 static unsigned int g_key_frame[24];
 static unsigned char g_key_live[24], g_key_reported[24];
 static void key_note(unsigned int reg, unsigned short value) {
@@ -162,9 +165,9 @@ static void key_watchdog(void) {
     unsigned int now = pe_host_frame_number(), v;
     for (v = 0; v < 24; v++) {
         volatile unsigned short *r = s + v * 8;
-        if (g_key_live[v] && !g_key_reported[v] && r[6] != 0 && r[2] != 0 && now - g_key_frame[v] > 600) {
+        if (g_key_live[v] && !g_key_reported[v] && r[6] != 0 && r[2] != 0 && now - g_key_frame[v] > 2400) {
             g_key_reported[v] = 1;
-            fprintf(stderr, "pe: sound watchdog: voice %u still playing %u frames after key-on "
+            fprintf(stderr, "pe: sound watchdog: voice %u still playing %u driver ticks (240 a second) after key-on "
                             "(start %05X, loop %05X, pitch %04X, envelope %04X), no key-off\n",
                     v, now - g_key_frame[v], (unsigned)r[3] << 3, (unsigned)r[7] << 3, r[2], r[6]);
         }

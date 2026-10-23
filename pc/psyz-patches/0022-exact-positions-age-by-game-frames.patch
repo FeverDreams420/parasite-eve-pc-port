@@ -1,0 +1,47 @@
+diff --git a/psyz/include/psyz/video.h b/psyz/include/psyz/video.h
+index c23561a..625e984 100644
+--- a/psyz/include/psyz/video.h
++++ b/psyz/include/psyz/video.h
+@@ -315,6 +315,12 @@ void Psyz_VideoSetPrecision(int on);
+  * (whole pixel, exact position and how it was found, depth) to it. */
+ void Psyz_PgxpDebugFile(void* f);
+ 
++/** Precise geometry: a new game frame begins. Exact positions recorded in
++ * the current and the previous game frame count; a port calls this once per
++ * game frame (its VSync), so the polygons of a frame drawn after its next
++ * VSync still find them, however many presents the frame took. */
++void Psyz_PgxpNewFrame(void);
++
+ /** Debug: VRAM read-backs since the last call (each waits for the GPU) and the
+  * milliseconds they took. */
+ void Psyz_VideoDownloadStats(unsigned* count, double* ms);
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index d8e842f..cab5ef1 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -1221,7 +1221,10 @@ static void PlatformBackend_Present(void) {
+         cmd = NULL;
+     }
+     finish_time = SDL_GetPerformanceCounter();
+-    Psyz_PgxpNewFrame(); // precise positions of older frames stop counting
++    // precise positions age by game frames, not by presents: the port calls
++    // Psyz_PgxpNewFrame once per game frame (a frame can take 2 or 3
++    // presents, and by presents whole frames were drawn after their
++    // positions had expired)
+     {
+         static unsigned frames;
+         if (++frames % 300 == 0 && getenv("PE_LOG_PGXP")) {
+diff --git a/psyz/src/psyz/libgte.c b/psyz/src/psyz/libgte.c
+index d81f0e0..6ffb7b5 100644
+--- a/psyz/src/psyz/libgte.c
++++ b/psyz/src/psyz/libgte.c
+@@ -1797,7 +1797,8 @@ static unsigned clz16(unsigned x) {
+ 
+ // ---- precise geometry (Psyz_VideoSetPrecision) ----------------------------
+ // Exact screen positions of projected vertices, keyed by the packed integer
+-// screen XY. Entries of the last two frames count; a key seen again simply
++// screen XY. Entries of the last two game frames count (Psyz_PgxpNewFrame,
++// called by the port once per game frame); a key seen again simply
+ // takes the newest position (vertices that round to the same pixel are less
+ // than a pixel apart anyway).
+ #define PGXP_SIZE 65536

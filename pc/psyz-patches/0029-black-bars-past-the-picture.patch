@@ -1,0 +1,80 @@
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index 41a9df1..54404ab 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -194,6 +194,34 @@ static void DrawBorderBars(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* swapchain,
+ static SDL_GPUTexture* ShrinkForBorders(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* tex,
+                                         float x, float y, float w, float h, float* cw,
+                                         float* ch, float* aw, float* ah);
++// A 1x1 black texture (cleared once), stretched by a blit for black bars.
++static SDL_GPUTexture* black_tex = NULL;
++static SDL_GPUTexture* BlackTexture(void) {
++    if (!black_tex && device) {
++        const SDL_GPUTextureCreateInfo info = {
++            .type = SDL_GPU_TEXTURETYPE_2D,
++            .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
++            .usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
++            .width = 1,
++            .height = 1,
++            .layer_count_or_depth = 1,
++            .num_levels = 1,
++        };
++        black_tex = SDL_CreateGPUTexture(device, &info);
++        SDL_GPUCommandBuffer* c = black_tex ? SDL_AcquireGPUCommandBuffer(device) : NULL;
++        if (c) {
++            const SDL_GPUColorTargetInfo t = {
++                .texture = black_tex,
++                .clear_color = {0.0f, 0.0f, 0.0f, 1.0f},
++                .load_op = SDL_GPU_LOADOP_CLEAR,
++                .store_op = SDL_GPU_STOREOP_STORE,
++            };
++            SDL_EndGPURenderPass(SDL_BeginGPURenderPass(c, &t, 1, NULL));
++            SDL_SubmitGPUCommandBuffer(c);
++        }
++    }
++    return black_tex;
++}
+ static Posi draw_area_start = {0, 0};
+ static Posi draw_area_end = {0x10000, 0x10000};
+ static SDL_Rect scissor_rect = {0, 0, VRAM_W, VRAM_H};
+@@ -1328,6 +1356,40 @@ static void PlatformBackend_Present_(void) {
+                     .filter = ws_view ? SDL_GPU_FILTER_LINEAR : SDL_GPU_FILTER_NEAREST,
+                 };
+                 SDL_BlitGPUTexture(cmd, &blit);
++                if (!soft_borders && ws_view && ws_vw > 0.0f) {
++                    // Plain black where the room's stored picture ends inside
++                    // the 16:9 window (one straight bar per side at the
++                    // picture's ends, ws_pl / ws_pr): models and effects the
++                    // game draws past the picture (the cop's arm in the car
++                    // scene, rooms kept only as 4:3) are hidden, as on the
++                    // 4:3 screen. With soft borders on, those bars do this.
++                    const float half_w = (float)display_size.x * 0.5f;
++                    const float bl = half_w + (ws_pl - half_w) * WS_SQUEEZE;
++                    const float br = half_w + (ws_pr - half_w) * WS_SQUEEZE;
++                    const float scale = (float)dst.w / ws_vw;
++                    SDL_GPUTexture* black = BlackTexture();
++                    float xs[2][2] = {{(float)dst.x, (float)dst.x + (bl - ws_x0) * scale},
++                                      {(float)dst.x + (br - ws_x0) * scale, (float)(dst.x + dst.w)}};
++                    for (int side = 0; black && side < 2 && br - bl > 8.0f; side++) {
++                        // clamped to the window before converting (no picture
++                        // found gives ends of -1e9 / 1e9)
++                        const float lo = (float)dst.x, hi = (float)(dst.x + dst.w);
++                        const float xa = xs[side][0] < lo ? lo : (xs[side][0] > hi ? hi : xs[side][0]);
++                        const float xb = xs[side][1] < lo ? lo : (xs[side][1] > hi ? hi : xs[side][1]);
++                        const Uint32 x0 = (Uint32)(xa + 0.5f), x1 = (Uint32)(xb + 0.5f);
++                        if (x1 <= x0) {
++                            continue;
++                        }
++                        const SDL_GPUBlitInfo bar = {
++                            .source = {.texture = black, .w = 1, .h = 1},
++                            .destination = {.texture = swapchain, .x = x0, .y = (Uint32)dst.y,
++                                            .w = x1 - x0, .h = (Uint32)dst.h},
++                            .load_op = SDL_GPU_LOADOP_LOAD,
++                            .filter = SDL_GPU_FILTER_NEAREST,
++                        };
++                        SDL_BlitGPUTexture(cmd, &bar);
++                    }
++                }
+                 if (soft_borders && !debug_show_vram) {
+                     // two bars per run of lines with the same picture ends
+                     static BorderBar bars[2 * WS_ROWS + 2];

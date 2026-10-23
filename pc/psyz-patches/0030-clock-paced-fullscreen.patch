@@ -1,0 +1,244 @@
+diff --git a/psyz/include/psyz/video.h b/psyz/include/psyz/video.h
+index c1f7d1a..f5eebe5 100644
+--- a/psyz/include/psyz/video.h
++++ b/psyz/include/psyz/video.h
+@@ -100,6 +100,22 @@ PsyzVsyncMode Psyz_VideoGetVsyncMode(void);
+  */
+ int Psyz_VideoSetVsyncMode(PsyzVsyncMode mode);
+ 
++/**
++ * @brief Clock pacing (on in fullscreen, F4): Psyz_VideoVSync(0) shows the
++ * frame at most once per screen refresh and waits for a clock schedule of one
++ * refresh per step instead of for the present.
++ *
++ * @return 1 while clock pacing is on
++ */
++int Psyz_VideoClockPacing(void);
++
++/**
++ * @brief The next Psyz_VideoVSync(0) waits its refresh step without showing
++ * the frame again (a game frame that lasts several refreshes). Only used
++ * while clock pacing is on.
++ */
++void Psyz_VideoSkipNextPresent(void);
++
+ /**
+  * @brief Get the current dithering mode
+  *
+diff --git a/psyz/src/platform/sdl3_common.h b/psyz/src/platform/sdl3_common.h
+index 5cb0ec0..0a98d43 100644
+--- a/psyz/src/platform/sdl3_common.h
++++ b/psyz/src/platform/sdl3_common.h
+@@ -197,6 +197,19 @@ static PsyzDitherMode dither_mode = PSYZ_DITHER_AUTO;
+ static bool use_driver_vsync = false;
+ static PsyzVideoStats gpu_stats = {0};
+ 
++// Clock pacing (fullscreen, F4). Normally a refresh step presents the frame
++// and is paced by the present waiting for VSync, so a game frame that lasts
++// two refreshes is presented twice (four times in movies). With clock pacing
++// a game frame is presented once (Psyz_VideoSkipNextPresent for the repeat
++// steps), at most once per refresh, and every step waits for a clock
++// schedule of one display refresh instead of for the present.
++static bool clock_pacing = false;
++static bool skip_next_present = false;
++static bool prefer_mailbox = false; // no-VSync present without tearing
++static double display_hz = 60.0;    // the window's display, ConfigureVSync
++static Uint64 clock_due = 0;        // performance counter of the next step
++static Uint64 last_present_pc = 0;
++
+ static void PollEvents(void);
+ 
+ // overlay callbacks shared across backends
+@@ -247,6 +260,37 @@ static double GetElapsedMicroseconds(Uint64 start, Uint64 end) {
+ }
+ 
+ static void ConfigureVSync(double target_fps) {
++    {
++        SDL_DisplayID id = sdl3_window ? SDL_GetDisplayForWindow(sdl3_window) : 0;
++        const SDL_DisplayMode* m;
++        if (!id) {
++            id = SDL_GetPrimaryDisplay();
++        }
++        m = SDL_GetCurrentDisplayMode(id);
++        display_hz = 60.0;
++        if (m && m->refresh_rate_numerator > 0 && m->refresh_rate_denominator > 0) {
++            display_hz = (double)m->refresh_rate_numerator / m->refresh_rate_denominator;
++        } else if (m && m->refresh_rate > 0.0f) {
++            display_hz = m->refresh_rate;
++        }
++        // one step is one PS1 refresh: a display far from the game's rate
++        // (120 Hz, 50 Hz) is paced at the game's rate instead
++        if (fabs(display_hz - target_fps) > target_fps * 0.05) {
++            display_hz = target_fps;
++        }
++    }
++    prefer_mailbox = clock_pacing;
++    if (clock_pacing) {
++        // the clock paces; VSync only keeps the picture from tearing
++        // (fast forward: newest frame at each refresh, never waiting)
++        const bool vsync = vsync_mode != PSYZ_VSYNC_LIMITLESS;
++        PlatformBackend_SetDriverVsync(vsync);
++        use_driver_vsync = false;
++        clock_due = 0;
++        INFOF("clock pacing at %.3f Hz (%s)", display_hz,
++              vsync ? "driver VSync against tearing" : "fast forward, newest frame");
++        return;
++    }
+     if (vsync_mode == PSYZ_VSYNC_ON) {
+         use_driver_vsync = PlatformBackend_SetDriverVsync(true);
+         INFOF("vsync forced ON (driver VSync)");
+@@ -363,6 +407,7 @@ static void Sdl3Common_ApplyPendingTimingReset(void) {
+     drift_compensation = 0.0;
+     last_frame_time = SDL_GetPerformanceCounter();
+     finish_time = last_frame_time;
++    clock_due = 0;
+     last_vsync_us = (Uint32)(SDL_GetTicksNS() / 1000);
+     if (sdl3_window && is_platform_init_successful) {
+         ConfigureVSync(target_frame_rate);
+@@ -460,6 +505,46 @@ static void WaitForNextFrame(void) {
+     last_frame_time = frame_end_time;
+ }
+ 
++// One refresh step under clock pacing: show the frame unless it is a repeat
++// (Psyz_VideoSkipNextPresent) or, in fast forward, a refresh has not passed
++// since the last one shown; then wait for the schedule (one refresh per step;
++// more than 50 ms late, it starts again from now).
++static void ClockPacedStep(void) {
++    const Uint64 step = (Uint64)((double)perf_frequency / display_hz);
++    const bool limitless = vsync_mode == PSYZ_VSYNC_LIMITLESS;
++    Uint64 now = SDL_GetPerformanceCounter();
++    bool show = !skip_next_present;
++    skip_next_present = false;
++    if (show && limitless && last_present_pc && now - last_present_pc < step - step / 20) {
++        show = false;
++    }
++    if (show) {
++        PlatformBackend_Present();
++        last_present_pc = SDL_GetPerformanceCounter();
++    } else {
++        finish_time = now;
++    }
++    PollEvents();
++    now = SDL_GetPerformanceCounter();
++    if (limitless) {
++        clock_due = 0;
++    } else if (!clock_due || now > clock_due + perf_frequency / 20) {
++        clock_due = now;
++    } else {
++        clock_due += step;
++        if (now < clock_due) {
++            SDL_DelayPrecise((Uint64)((double)(clock_due - now) * 1e9 / (double)perf_frequency));
++        }
++    }
++    now = SDL_GetPerformanceCounter();
++    gpu_stats.last_frame_time_us = GetElapsedMicroseconds(last_frame_time, now);
++    gpu_stats.last_draw_time_us = GetElapsedMicroseconds(last_frame_time, finish_time);
++    gpu_stats.target_frame_time_us = 1000000.0 / display_hz;
++    gpu_stats.total_frames++;
++    gpu_stats.using_driver_vsync = false;
++    last_frame_time = now;
++}
++
+ int Psyz_VideoVSync(int mode) {
+     Uint32 now_us;
+     unsigned short ret;
+@@ -470,7 +555,11 @@ int Psyz_VideoVSync(int mode) {
+     // a line is approximated as 64 us
+     now_us = (Uint32)(SDL_GetTicksNS() / 1000);
+     ret = (unsigned short)((now_us - last_vsync_us) >> 6);
+-    if (mode == 0) {
++    if (mode == 0 && clock_pacing) {
++        ClockPacedStep();
++        last_vsync_us = (Uint32)(SDL_GetTicksNS() / 1000);
++    } else if (mode == 0) {
++        skip_next_present = false;
+         PlatformBackend_Present();
+         PollEvents();
+         WaitForNextFrame();
+@@ -479,6 +568,10 @@ int Psyz_VideoVSync(int mode) {
+     return ret;
+ }
+ 
++int Psyz_VideoClockPacing(void) { return clock_pacing; }
++
++void Psyz_VideoSkipNextPresent(void) { skip_next_present = true; }
++
+ int Psyz_VideoSetVsyncMode(PsyzVsyncMode mode) {
+     if (mode < 0 || mode > 3) {
+         return -1;
+@@ -822,15 +915,17 @@ void Psyz_PadsPoll(void) {
+ }
+ 
+ #ifndef PLATFORM_IOS
+-// "Fullscreen" (F4) is a borderless window over the whole display but one
+-// line shorter. Exclusive fullscreen made the game run fast on one PC (D3D12,
+-// PsyZ 0023) and made movies and fast forward lag there; SDL's borderless
+-// fullscreen lagged the same, while an ordinary window ran smoothly. A window
+-// that covers the screen exactly is taken over by Windows directly
+-// (independent flip, much like exclusive); one line short, it stays an
+-// ordinary window on the desktop compositor.
++// Fullscreen (F4): SDL's borderless fullscreen at the desktop mode, with
++// clock pacing (ClockPacedStep). Shift+F4: a borderless window one line
++// shorter than the display, with the usual present pacing. Windows hands a
++// window that covers the whole display straight to the screen (independent
++// flip), so presents wait on real refreshes; one line short, the window
++// stays on the desktop compositor. Kept as a fallback: on one D3D12 PC
++// present-paced fullscreen lagged in movies and fast forward, while this
++// window and clock-paced fullscreen both ran smoothly.
+ static int fs_saved_x, fs_saved_y, fs_saved_w, fs_saved_h;
+-static void SetFullScreen(bool isFullscreen) {
++static bool fs_real = false; // the current fullscreen is SDL's real one
++static void SetFullScreen(bool isFullscreen, bool real) {
+     if (!sdl3_window) {
+         return;
+     }
+@@ -838,7 +933,22 @@ static void SetFullScreen(bool isFullscreen) {
+         return;
+     }
+     is_fullscreen = isFullscreen;
+-    if (is_fullscreen) {
++    if (is_fullscreen && real) {
++        fs_real = true;
++        SDL_SetWindowFullscreenMode(sdl3_window, NULL); // desktop mode, borderless
++        if (!SDL_SetWindowFullscreen(sdl3_window, true)) {
++            WARNF("failed to enter fullscreen: %s", SDL_GetError());
++            is_fullscreen = fs_real = false;
++            return;
++        }
++        clock_pacing = true;
++        INFOF("entered fullscreen (clock pacing)");
++    } else if (!is_fullscreen && fs_real) {
++        fs_real = false;
++        clock_pacing = false;
++        SDL_SetWindowFullscreen(sdl3_window, false);
++        INFOF("returned to windowed mode");
++    } else if (is_fullscreen) {
+         SDL_DisplayID display_id = SDL_GetDisplayForWindow(sdl3_window);
+         SDL_Rect r;
+         if (!display_id) {
+@@ -907,7 +1017,7 @@ static void PollEvents(void) {
+                 debug_show_vram ^= 1;
+             }
+             if (event.key.scancode == SDL_SCANCODE_F4 && !event.key.repeat) {
+-                SetFullScreen(!is_fullscreen);
++                SetFullScreen(!is_fullscreen, !(event.key.mod & SDL_KMOD_SHIFT));
+             }
+             break;
+ #endif
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index a4704c7..84656ba 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -737,7 +737,11 @@ static bool PlatformBackend_SetDriverVsync(bool enable) {
+     }
+     SDL_GPUPresentMode mode = SDL_GPU_PRESENTMODE_VSYNC;
+     if (!enable) {
+-        if (SDL_WindowSupportsGPUPresentMode(
++        // clock pacing (fullscreen) wants no tearing: mailbox first
++        if (prefer_mailbox && SDL_WindowSupportsGPUPresentMode(
++                                  device, sdl3_window, SDL_GPU_PRESENTMODE_MAILBOX)) {
++            mode = SDL_GPU_PRESENTMODE_MAILBOX;
++        } else if (SDL_WindowSupportsGPUPresentMode(
+                 device, sdl3_window, SDL_GPU_PRESENTMODE_IMMEDIATE)) {
+             mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
+         } else if (SDL_WindowSupportsGPUPresentMode(

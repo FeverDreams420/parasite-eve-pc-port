@@ -7,7 +7,8 @@
  *        so this works for the story movies too.
  *   Tab  fast forward while held: the frame waits are skipped (one refresh
  *        step per game frame, no clock waits) and PsyZ's frame limiter and
- *        driver VSync are switched off; they are restored on release.
+ *        driver VSync are switched off; they are restored on release. The
+ *        timers (the sound driver's) follow the game's blanks meanwhile.
  *        Movies keep their own pace (CD streaming runs on the clock).
  *
  * Keys are read from SDL's keyboard state, so only while the game window has
@@ -21,9 +22,12 @@
  *   F5   save: opens the memory-card save screen, as a phone does, wherever
  *        the in-game menu could be opened (host patch of Entity_FrameUpdate).
  *
+ *   F7   graphics: switches between HD (8x) and Original (1x, PS1) and
+ *        saves it in settings.ini (settings.c).
+ *
  * For tests without a keyboard, PE_KEY_SCRIPT="first-last:mask,..." holds
  * keys for game frames first..last (mask 1 = skip movie, 2 = fast forward,
- * 4 = snapshot, 8 = save).
+ * 4 = snapshot, 8 = save, 16 = HD / Original).
  */
 #include <psyz.h>
 #include <psyz/video.h>
@@ -42,6 +46,8 @@ unsigned int pe_host_frame_number(void);
 #define KEY_SNAP 4
 #define KEY_SAVE 8
 #define SCANCODE_F5 62
+#define KEY_RES 16
+#define SCANCODE_F7 64
 
 static unsigned int script_keys(unsigned int frame) {
     static const char *script;
@@ -86,6 +92,9 @@ static unsigned int keys_now(void) {
         if (n > SCANCODE_F5 && k[SCANCODE_F5]) {
             m |= KEY_SAVE;
         }
+        if (n > SCANCODE_F7 && k[SCANCODE_F7]) {
+            m |= KEY_RES;
+        }
     }
     return m;
 }
@@ -97,11 +106,24 @@ static PsyzVsyncMode g_saved_mode;
 
 /* Once per game frame, from VSync. */
 void pe_host_snapshot_request(void);
+void pe_host_settings_load(void);
+void pe_host_settings_next_resolution(void);
+void pe_host_ws_frame(void);
+void Psyz_KernelSetVBlankClock(int on);
 
 void pe_host_hotkeys_frame(void) {
     int fast;
     unsigned int before = g_keys;
+    static int settings_loaded;
+    if (!settings_loaded) {
+        settings_loaded = 1;
+        pe_host_settings_load();
+    }
+    pe_host_ws_frame(); /* widescreen.c */
     g_keys = keys_now();
+    if ((g_keys & KEY_RES) && !(before & KEY_RES)) {
+        pe_host_settings_next_resolution();
+    }
     if ((g_keys & KEY_SNAP) && !(before & KEY_SNAP)) {
         pe_host_snapshot_request();
     }
@@ -116,6 +138,13 @@ void pe_host_hotkeys_frame(void) {
         } else {
             Psyz_VideoSetVsyncMode(g_saved_mode);
         }
+        /* The sound driver runs on a timer (root counter 2). While fast
+         * forward runs the game faster than real time, that timer follows the
+         * game's blanks, not the clock; otherwise the game gave the driver
+         * commands faster than it took them, stops were lost and sounds kept
+         * looping (the battle healing sound, every watchdog report in the log
+         * came with fast forward on). */
+        Psyz_KernelSetVBlankClock(fast);
         g_fast = fast;
         fprintf(stderr, "pe: fast forward %s\n", fast ? "on" : "off");
     }

@@ -13,3 +13,25 @@
  }
  
  void Menu_DrawMemCardPortItem(int arg0) {
+@@ -20,7 +22,21 @@
+     }
+ }
+ 
++unsigned char *pe_host_menu_text(int id);
++void Draw_PrintCenteredTextInWidth(unsigned char *text, int width);
++extern int D_8009D164;
++
+ void Menu_DrawMainMenuItem(int arg0) {
++    /* Host: row 4 of Set User Preferences is Graphics (Menu_CreateMainMenuView.c). */
++    if (arg0 == 4) {
++        Draw_PrintCenteredTextInWidth(pe_host_menu_text(0), D_8009D164);
++        return;
++    }
++    /* Host: row 5 is Borders. */
++    if (arg0 == 5) {
++        Draw_PrintCenteredTextInWidth(pe_host_menu_text(6), D_8009D164);
++        return;
++    }
+     MenuWidget_DrawCenteredTableText(arg0 + 0x28);
+ }
+ 

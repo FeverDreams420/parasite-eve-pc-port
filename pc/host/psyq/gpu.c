@@ -91,12 +91,71 @@ void pe_host_gpu_log_note(const char *what, int a, int b, int c, int d) {
     }
 }
 
+int pe_host_widescreen_margin(void);
+
+/* Widescreen (settings.c, PsyZ 0009): an untextured rectangle or polygon that
+ * covers the whole 320-pixel width (fades, flashes, dimmed backdrops) is
+ * widened by the margin on both sides, so it covers the 16:9 picture too.
+ * Works on a copy: the game's packet in PS1 RAM is left as it was. */
+static const uint32_t *widen_full_width(const uint32_t *p, uint32_t len, uint32_t *copy) {
+    uint32_t op, k, n, o = 0;
+    int m = pe_host_widescreen_margin(), minx = 9999, maxx = -9999, idx[4], step;
+    if (m == 0 || len > 12) {
+        return p;
+    }
+    /* the primitive can follow mode words in the same packet: the dialogue
+     * box is E1 (texture page / semi-transparency), a NOP, then a 320-wide
+     * semi-transparent TILE, which was left 4:3 inside the 16:9 picture */
+    while (o + 1 < len && ((p[1 + o] >> 24) == 0 || ((p[1 + o] >> 24) >= 0xE1 && (p[1 + o] >> 24) <= 0xE6))) {
+        o++;
+    }
+    op = p[1 + o] >> 24;
+    if (op >= 0x60 && op <= 0x63) { /* TILE: color, xy, wh */
+        int x = (int16_t)(p[2 + o] & 0xFFFF), w = (int)(p[3 + o] & 0xFFFF);
+        if (len < 3 + o || x > 0 || x + w < 320) {
+            return p;
+        }
+        memcpy(copy, p, (len + 1) * 4);
+        copy[2 + o] = (copy[2 + o] & 0xFFFF0000u) | ((uint32_t)(x - m) & 0xFFFF);
+        copy[3 + o] = (copy[3 + o] & 0xFFFF0000u) | ((uint32_t)(w + 2 * m) & 0xFFFF);
+        return copy;
+    }
+    if (op < 0x20 || op > 0x3F || (op & 4)) { /* untextured polygons only */
+        return p;
+    }
+    n = (op & 8) ? 4 : 3;
+    step = (op & 0x10) ? 2 : 1; /* gouraud: a colour word before each later vertex */
+    for (k = 0; k < n; k++) {
+        idx[k] = 2 + (int)o + (int)k * step;
+        if ((uint32_t)idx[k] > len) {
+            return p;
+        }
+        {
+            int x = (int16_t)(p[idx[k]] & 0xFFFF);
+            minx = x < minx ? x : minx;
+            maxx = x > maxx ? x : maxx;
+        }
+    }
+    if (minx > 0 || maxx < 320) {
+        return p;
+    }
+    memcpy(copy, p, (len + 1) * 4);
+    for (k = 0; k < n; k++) {
+        int x = (int16_t)(copy[idx[k]] & 0xFFFF);
+        x = x <= 0 ? x - m : (x >= 320 ? x + m : x);
+        copy[idx[k]] = (copy[idx[k]] & 0xFFFF0000u) | ((uint32_t)x & 0xFFFF);
+    }
+    return copy;
+}
+
 static void push_packet(const uint32_t *p) {
     uint32_t len = p[0] >> 24;
     uint32_t i;
+    uint32_t copy[16];
     if (len == 0) {
         return;
     }
+    p = widen_full_width(p, len, copy);
     if (g_snap_file) {
         uint32_t k;
         g_snap_packets++;
@@ -121,7 +180,13 @@ static void push_packet(const uint32_t *p) {
         g_queued = 0;
     }
     for (i = 1; i <= len; i++) {
-        Psyz_GpuWriteGP0(p[i]);
+        /* where the word is in PS1 RAM (not for a widened copy), so precise
+         * geometry can find the polygon's vertices (precise_anim.c) */
+        if (p == copy) {
+            Psyz_GpuWriteGP0(p[i]);
+        } else {
+            Psyz_GpuWriteGP0At(p[i], &p[i]);
+        }
     }
     g_queued += (int)len;
 }
@@ -150,7 +215,20 @@ static void walk(const uint32_t *p) {
     flush();
 }
 
-void pe_psyq_DrawOTag(uint32_t *ot) { walk(ot); }
+void pe_host_ws_commit(void);
+double pe_host_now_s(void);
+static double g_draw_s; /* pacing log (forward.c): time spent drawing */
+double pe_host_draw_s_take(void) {
+    double d = g_draw_s;
+    g_draw_s = 0.0;
+    return d;
+}
+void pe_psyq_DrawOTag(uint32_t *ot) {
+    double t0 = pe_host_now_s();
+    pe_host_ws_commit(); /* widescreen window for this buffer (widescreen.c) */
+    walk(ot);
+    g_draw_s += pe_host_now_s() - t0;
+}
 
 void pe_psyq_DrawPrim(uint32_t *p) {
     push_packet(p);
@@ -205,6 +283,7 @@ static void to_psyz(const GameDrawEnv *g, DRAWENV *e) {
 static DRAWENV g_psyz_env;
 
 GameDrawEnv *pe_psyq_PutDrawEnv(GameDrawEnv *env) {
+    pe_host_gpu_log_note("DrawEnv", env->clip_x, env->clip_y, env->clip_w, env->clip_h);
     to_psyz(env, &g_psyz_env);
     PutDrawEnv(&g_psyz_env);
     return env;
@@ -212,5 +291,6 @@ GameDrawEnv *pe_psyq_PutDrawEnv(GameDrawEnv *env) {
 
 void pe_psyq_DrawOTagEnv(uint32_t *ot, GameDrawEnv *env) {
     pe_psyq_PutDrawEnv(env);
+    pe_host_ws_commit();
     walk(ot);
 }

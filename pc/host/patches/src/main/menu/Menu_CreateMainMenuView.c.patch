@@ -1,0 +1,143 @@
+--- a/src/main/menu/Menu_CreateMainMenuView.c
++++ b/src/main/menu/Menu_CreateMainMenuView.c
+@@ -15,7 +15,9 @@
+     parent->update = Menu_MainMenuInputHandler;
+     child->draw = Menu_DrawMainMenuList;
+     MenuWidget_SetCurrentNode(child);
+-    Draw_SetPrimCallback(child, 4);
++    /* Host: a 5th and 6th row, Graphics and Borders (Menu_DrawMainMenuItem in
++     * menu_draw3.c); the list's window has room for 6 rows. */
++    Draw_SetPrimCallback(child, 6);
+ }
+ 
+ #include "pe1/menu_widget.h"
+@@ -30,6 +32,8 @@
+ extern void Menu_CreateBonusPointAllocationView(void);
+ extern void Menu_PlayConfirmSound(void);
+ extern void Menu_PlayCancelSound(void);
++static void Menu_OpenGraphicsPopup(MenuWidgetNode *arg0);
++static void Menu_OpenBordersPopup(MenuWidgetNode *arg0);
+ 
+ int Menu_MainMenuInputHandler(MenuWidgetNode *arg0, u32 arg1) {
+     MenuWidgetNode *child = MenuWidget_GetChild(arg0, 0);
+@@ -49,7 +53,15 @@
+             Menu_OpenScreenAdjustView(child);
+             break;
+         case 4:
++            /* Host: row 4 is Graphics (the retail list stops at 4 rows). */
++            Menu_OpenGraphicsPopup(child);
++            break;
+         case 5:
++            /* Host: row 5 is Borders (the retail case 5 below is unreachable
++             * there: it belonged to a debug row of this list). */
++            Menu_OpenBordersPopup(child);
++            break;
++        case 6:
+             Inv_InitMaxLevelInventory(MenuWidget_GridCellIndex(child) - 4);
+             MenuWidget_DestroyNode(arg0);
+             Menu_CreateBonusPointAllocationView();
+@@ -138,3 +150,104 @@
+     }
+     return 1;
+ }
++
++/* Host addition: the Graphics popup (HD / Original), built like the Cursor
++ * one above (func_8004B03C / func_8004B0A4 / Menu_DrawBlendOptionItem), in
++ * widget mode 0x2B, which the game leaves unused (its window and list
++ * descriptors come from the host, Tbl_DescriptorLookups.c). The current
++ * choice is marked the way the game marks Default / Memory. */
++int pe_host_graphics_is_hd(void);
++void pe_host_graphics_set_hd(int hd);
++unsigned char *pe_host_menu_text(int id);
++void Draw_PrintCenteredTextInWidth(u8 *text, int width);
++void Draw_DropShadow(void);
++void MenuWidget_DrawList();
++extern int D_8009D164;
++
++static void Menu_DrawGraphicsOptionItem(int arg0) {
++    Draw_PrintCenteredTextInWidth(pe_host_menu_text(1 + arg0), D_8009D164);
++    if ((pe_host_graphics_is_hd() ? 0 : 1) == arg0) {
++        Draw_DropShadow();
++    }
++}
++
++static void Menu_DrawGraphicsOptionList(int arg0) {
++    MenuWidget_DrawList(arg0, Menu_DrawGraphicsOptionItem);
++}
++
++static int Menu_GraphicsPopupInput(MenuWidgetNode *arg0, u32 arg1) {
++    MenuWidgetNode *base;
++
++    base = MenuWidget_GetChild(arg0, 0);
++    if (arg1 & 0x10000) {
++        Menu_PlayConfirmSound();
++        pe_host_graphics_set_hd(MenuWidget_GridCellIndex(base) == 0);
++        MenuWidget_DestroyNode(arg0);
++        return 1;
++    }
++    if (arg1 & 0x40) {
++        MenuWidget_DestroyNode(arg0);
++        Menu_PlayCancelSound();
++    }
++    return 1;
++}
++
++extern int pe_host_menu_popup_kind; /* 0 Graphics, 1 Borders (Tbl_DescriptorLookups.c) */
++
++static void Menu_OpenGraphicsPopup(MenuWidgetNode *arg0) {
++    MenuWidgetNode *created;
++    MenuWidgetNode *node;
++
++    pe_host_menu_popup_kind = 0;
++    created = MenuWidget_CreateSimpleNode(0x2B, arg0, 0, 0);
++    node = MenuWidget_CreateNode(0x2B, created, created);
++    created->update = (void *)Menu_GraphicsPopupInput;
++    node->draw = (void *)Menu_DrawGraphicsOptionList;
++    MenuWidget_SetCurrentNode(node);
++}
++
++/* Host addition: the Borders popup (On / Off), the same popup as Graphics,
++ * one row lower (widget mode 0x2B, pe_host_menu_popup_kind 1). */
++int pe_host_soft_borders(void);
++void pe_host_set_soft_borders(int on);
++
++static void Menu_DrawBordersOptionItem(int arg0) {
++    Draw_PrintCenteredTextInWidth(pe_host_menu_text(7 + arg0), D_8009D164);
++    if ((pe_host_soft_borders() ? 0 : 1) == arg0) {
++        Draw_DropShadow();
++    }
++}
++
++static void Menu_DrawBordersOptionList(int arg0) {
++    MenuWidget_DrawList(arg0, Menu_DrawBordersOptionItem);
++}
++
++static int Menu_BordersPopupInput(MenuWidgetNode *arg0, u32 arg1) {
++    MenuWidgetNode *base;
++
++    base = MenuWidget_GetChild(arg0, 0);
++    if (arg1 & 0x10000) {
++        Menu_PlayConfirmSound();
++        pe_host_set_soft_borders(MenuWidget_GridCellIndex(base) == 0);
++        MenuWidget_DestroyNode(arg0);
++        return 1;
++    }
++    if (arg1 & 0x40) {
++        MenuWidget_DestroyNode(arg0);
++        Menu_PlayCancelSound();
++    }
++    return 1;
++}
++
++static void Menu_OpenBordersPopup(MenuWidgetNode *arg0) {
++    MenuWidgetNode *created;
++    MenuWidgetNode *node;
++
++    pe_host_menu_popup_kind = 1;
++    created = MenuWidget_CreateSimpleNode(0x2B, arg0, 0, 0);
++    node = MenuWidget_CreateNode(0x2B, created, created);
++    created->update = (void *)Menu_BordersPopupInput;
++    node->draw = (void *)Menu_DrawBordersOptionList;
++    MenuWidget_SetCurrentNode(node);
++}
++

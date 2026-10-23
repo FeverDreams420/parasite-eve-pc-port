@@ -1,0 +1,66 @@
+--- a/src/main/render/Render_MeshListAndFade.c
++++ b/src/main/render/Render_MeshListAndFade.c
+@@ -10,6 +10,11 @@
+ #include "pe1/psyq_nop.h"
+ #include "pe1/game_state.h"
+ #include "pe1/gte.h"
++/* Host: in widescreen the background is drawn this many pixels further on
++ * each side; the stored backgrounds are wider than the screen (settings.c). */
++int pe_host_widescreen_margin(void);
++void pe_host_ws_tile(void *layer, int x, int y, const void *sprite,
++                     const void *page); /* widescreen.c: where the picture is */
+ #include "pe1/gte_types.h"
+ #include "pe1/field_tile.h"
+ #include "pe1/field_anim.h"
+@@ -67,6 +71,7 @@
+     register s32 raw_y asm("$7");
+     register s32 screen_src asm("$3");
+     char frame_pad[9];
++    int ws_margin = pe_host_widescreen_margin();
+ 
+     active = D_8009CDDC;
+     asm("" : "=r"(active) : "0"(active));
+@@ -146,15 +151,15 @@
+                     register u32 word_x asm("$2") = *position_cursor;
+                     register s32 x asm("$4") = scroll_x + (word_x >> 22);
+                     draw_x = x;
+-                    if ((s16)x >= 320) {
++                    if ((s16)x >= 320 + ws_margin) {
+                         s32 modulus_x = entry->anim_mod_x;
+                         draw_x = x - modulus_x;
+-                    } else if ((s16)x < -15) {
++                    } else if ((s16)x < -15 - ws_margin) {
+                         s32 modulus_x = entry->anim_mod_x;
+                         draw_x = modulus_x + x;
+                     }
+                 }
+-                if ((u16)(draw_x + 15) < 0x14F) {
++                if ((u16)(draw_x + 15 + ws_margin) < 0x14F + 2 * ws_margin) {
+                         register s32 draw_y asm("$5");
+                         {
+                             u32 word_y = *position_cursor;
+@@ -182,6 +187,7 @@
+                                 ((RenderTilePacket *)sprite_cursor)->y = draw_y;
+                                 LINK_PACKET_PRELOADED(sprite_cursor, ot, sprite_tag, mask24, maskTop);
+                                 LINK_PAGE(page_cursor, ot, mask24, maskTop);
++                                pe_host_ws_tile(entry, draw_x, draw_y, sprite_cursor, page_cursor);
+                             }
+                         }
+                 }
+@@ -210,7 +216,7 @@
+             register s32 draw_x asm("$13");
+             x = scroll_x + (word >> 22);
+             draw_x = x;
+-            if ((u16)(x + 15) < 0x14F) {
++            if ((u16)(x + 15 + ws_margin) < 0x14F + 2 * ws_margin) {
+                     {
+                     s32 y;
+                     s32 draw_y;
+@@ -231,6 +237,7 @@
+                             ((RenderTilePacket *)sprite_cursor)->y = draw_y;
+                             LINK_PACKET_PRELOADED(sprite_cursor, ot, sprite_tag, mask24, maskTop);
+                             LINK_PAGE(page_cursor, ot, mask24, maskTop);
++                            pe_host_ws_tile(entry, draw_x, draw_y, sprite_cursor, page_cursor);
+                         }
+                     }
+                     }

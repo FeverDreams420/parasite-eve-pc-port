@@ -1,0 +1,26 @@
+diff --git a/psyz/src/psyz/libgte.c b/psyz/src/psyz/libgte.c
+index e694576..902a7f1 100644
+--- a/psyz/src/psyz/libgte.c
++++ b/psyz/src/psyz/libgte.c
+@@ -1800,8 +1800,8 @@ static unsigned clz16(unsigned x) {
+ // screen XY. Entries of the last two frames count; a key seen again simply
+ // takes the newest position (vertices that round to the same pixel are less
+ // than a pixel apart anyway).
+-#define PGXP_SIZE 8192
+-#define PGXP_PROBE 4
++#define PGXP_SIZE 65536
++#define PGXP_PROBE 16
+ static int pgxp_on;
+ static unsigned pgxp_gen = 2;
+ static struct {
+@@ -1916,8 +1916,8 @@ int Psyz_PgxpLast(int k, unsigned int sxy, float* x, float* y) {
+ // Exact positions tagged by where a polygon's vertex sits in memory
+ // (Psyz_PgxpTag): two vertices that round to the same pixel can't be mixed
+ // up there.
+-#define PGXP_TAGS 16384
+-#define PGXP_TAG_PROBE 8
++#define PGXP_TAGS 65536
++#define PGXP_TAG_PROBE 16
+ static struct {
+     const void* addr;
+     unsigned sxy, gen;

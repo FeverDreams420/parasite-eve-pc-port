@@ -1,0 +1,47 @@
+diff --git a/psyz/src/psyz/libgte.c b/psyz/src/psyz/libgte.c
+index b32b259..b7daed4 100644
+--- a/psyz/src/psyz/libgte.c
++++ b/psyz/src/psyz/libgte.c
+@@ -1819,6 +1819,15 @@ static inline unsigned pgxp_hash(unsigned k) {
+ void Psyz_VideoSetPrecision(int on) { pgxp_on = on != 0; }
+ int Psyz_PgxpEnabled(void) { return pgxp_on; }
+ static unsigned pgxp_fm_kept, pgxp_fm_dropped, pgxp_tag_hits; // debug (PE_LOG_PGXP)
++// debug settings read once: the lookups run for every polygon vertex and
++// getenv is slow on Windows
++static int pgxp_env(int* cache, const char* name) {
++    if (*cache < 0) {
++        *cache = getenv(name) != NULL;
++    }
++    return *cache;
++}
++static int pgxp_e_pa3 = -1, pgxp_e_untagged = -1, pgxp_e_drop = -1;
+ int pgxp_dbg_code;
+ void Psyz_PgxpNewFrame(void) {
+     static unsigned frames;
+@@ -1963,7 +1972,7 @@ int Psyz_PgxpLookupAt(const void* addr, unsigned int sxy, float* x, float* y, fl
+     if (!pgxp_on) {
+         return 0;
+     }
+-    if (getenv("PE_LOG_PA3")) {
++    if (pgxp_env(&pgxp_e_pa3, "PE_LOG_PA3")) {
+         static int n;
+         if (n++ < 6) {
+             INFOF("lookup at %p sxy %08x", addr, sxy);
+@@ -1985,7 +1994,7 @@ int Psyz_PgxpLookupAt(const void* addr, unsigned int sxy, float* x, float* y, fl
+             break;
+         }
+     }
+-    if (getenv("PE_LOG_PGXP_UNTAGGED")) { // debug: where untagged polygons live
++    if (pgxp_env(&pgxp_e_untagged, "PE_LOG_PGXP_UNTAGGED")) { // debug: where untagged polygons live
+         static unsigned n;
+         if (n++ % 2000 == 0) {
+             float tx, ty;
+@@ -2034,7 +2043,7 @@ static int pgxp_try(int f, double x, double y, double z, int sx, int sy) {
+             if (pv_f && pgxp_try(1, (x), (y), (z), (sx), (sy))) {              \
+                 pgxp_fm_kept++;                                                \
+             } else {                                                           \
+-                if (pv_f && getenv("PE_LOG_PGXP_DROP"))                        \
++                if (pv_f && pgxp_env(&pgxp_e_drop, "PE_LOG_PGXP_DROP"))        \
+                     INFOF("full precision dropped at %d,%d", (int)(sx),        \
+                           (int)(sy));                                          \
+                 pgxp_fm_dropped += pv_f;                                       \

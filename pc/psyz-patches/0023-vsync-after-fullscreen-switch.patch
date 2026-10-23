@@ -1,0 +1,26 @@
+diff --git a/psyz/src/platform/sdl3_common.h b/psyz/src/platform/sdl3_common.h
+index b3bbb45..bfe1793 100644
+--- a/psyz/src/platform/sdl3_common.h
++++ b/psyz/src/platform/sdl3_common.h
+@@ -265,7 +265,10 @@ static void ConfigureVSync(double target_fps) {
+         return;
+     }
+ 
+-    SDL_DisplayID display_id = SDL_GetPrimaryDisplay();
++    SDL_DisplayID display_id = sdl3_window ? SDL_GetDisplayForWindow(sdl3_window) : 0;
++    if (!display_id) {
++        display_id = SDL_GetPrimaryDisplay();
++    }
+     const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(display_id);
+     double detected_framerate = 60.0;
+     if (mode && mode->refresh_rate > 0.0f) {
+@@ -858,6 +861,9 @@ static void SetFullScreen(bool isFullscreen) {
+     SDL_SyncWindow(sdl3_window);
+     SDL_GetWindowSizeInPixels(
+         sdl3_window, &wnd_size_in_pixels.w, &wnd_size_in_pixels.h);
++    // the switch can change the refresh rate and reset the swapchain's
++    // present mode: set VSync up again for the mode now in use
++    ConfigureVSync(target_frame_rate);
+ }
+ #endif
+ 

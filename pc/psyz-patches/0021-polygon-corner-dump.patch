@@ -1,0 +1,89 @@
+diff --git a/psyz/include/psyz/video.h b/psyz/include/psyz/video.h
+index 68cff3e..c23561a 100644
+--- a/psyz/include/psyz/video.h
++++ b/psyz/include/psyz/video.h
+@@ -311,6 +311,10 @@ int Psyz_VideoHiresIndices4Active(int slot);
+  */
+ void Psyz_VideoSetPrecision(int on);
+ 
++/** Debug: while f (a FILE*) is set, every polygon drawn writes its corners
++ * (whole pixel, exact position and how it was found, depth) to it. */
++void Psyz_PgxpDebugFile(void* f);
++
+ /** Debug: VRAM read-backs since the last call (each waits for the GPU) and the
+  * milliseconds they took. */
+ void Psyz_VideoDownloadStats(unsigned* count, double* ms);
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index 34730a0..d8e842f 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -1869,6 +1869,10 @@ static bool BatchSamplesScaledDirty(void) {
+     }
+     return false;
+ }
++// debug (Psyz_PgxpDebugFile): every polygon's corners, written while set
++static FILE* pgxp_dbg;
++void Psyz_PgxpDebugFile(void* f) { pgxp_dbg = (FILE*)f; }
++
+ static int pgxp_texture_correction(void) {
+     static int on = -1;
+     if (on < 0) {
+@@ -1991,8 +1995,28 @@ int Draw_PushPrim(u_long* packets, int max_len) {
+                     extern int pgxp_dbg_code;
+                     const void* src = xy_at[k] ? Psyz_GpuWordSource(xy_at[k]) : NULL;
+                     pgxp_dbg_code = code;
+-                    if (src ? Psyz_PgxpLookupAt(src, (unsigned)*xy_at[k], &px, &py, &pz)
+-                            : Psyz_PgxpLookup(sxy, &px, &py, &pz)) {
++                    extern int pgxp_dbg_found;
++                    pgxp_dbg_found = src ? 0 : 2;
++                    int found = src ? Psyz_PgxpLookupAt(src, (unsigned)*xy_at[k], &px, &py, &pz)
++                                    : Psyz_PgxpLookup(sxy, &px, &py, &pz);
++                    if (pgxp_dbg) {
++                        // debug: each corner, its whole pixel, how its exact
++                        // position was found (a address, s screen XY, -
++                        // none) and where, and its depth
++                        if (k == 0) {
++                            fprintf(pgxp_dbg, "%p %02X", src, code);
++                        }
++                        if (found) {
++                            fprintf(pgxp_dbg, " %d,%d%c%.3f,%.3f,%.1f", pv->x, pv->y,
++                                    pgxp_dbg_found == 1 ? 'a' : 's', px, py, pz);
++                        } else {
++                            fprintf(pgxp_dbg, " %d,%d-", pv->x, pv->y);
++                        }
++                        if (k == n - 1) {
++                            fputc('\n', pgxp_dbg);
++                        }
++                    }
++                    if (found) {
+                         pgxp_stat_hit++;
+                         if (pz >= 1.0f) {
+                             wz[k] = pz;
+diff --git a/psyz/src/psyz/libgte.c b/psyz/src/psyz/libgte.c
+index b7daed4..d81f0e0 100644
+--- a/psyz/src/psyz/libgte.c
++++ b/psyz/src/psyz/libgte.c
+@@ -1829,6 +1829,7 @@ static int pgxp_env(int* cache, const char* name) {
+ }
+ static int pgxp_e_pa3 = -1, pgxp_e_untagged = -1, pgxp_e_drop = -1;
+ int pgxp_dbg_code;
++int pgxp_dbg_found; // debug: how the last lookup found it: 1 by address, 2 by screen XY
+ void Psyz_PgxpNewFrame(void) {
+     static unsigned frames;
+     pgxp_gen++;
+@@ -1984,6 +1985,7 @@ int Psyz_PgxpLookupAt(const void* addr, unsigned int sxy, float* x, float* y, fl
+         if (pgxp_tag[j].addr == addr) {
+             if (pgxp_tag[j].sxy == sxy && pgxp_tag[j].gen + 1 >= pgxp_gen) {
+                 pgxp_tag_hits++;
++                pgxp_dbg_found = 1;
+                 *x = pgxp_tag[j].x;
+                 *y = pgxp_tag[j].y;
+                 if (z) {
+@@ -2002,6 +2004,7 @@ int Psyz_PgxpLookupAt(const void* addr, unsigned int sxy, float* x, float* y, fl
+                   pgxp_dbg_code, sxy, Psyz_PgxpLookup(sxy, &tx, &ty, NULL));
+         }
+     }
++    pgxp_dbg_found = 2;
+     return Psyz_PgxpLookup(sxy, x, y, z);
+ }
+ 

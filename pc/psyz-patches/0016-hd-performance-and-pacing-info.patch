@@ -1,0 +1,271 @@
+diff --git a/psyz/include/psyz/video.h b/psyz/include/psyz/video.h
+index 313ffb8..2516b84 100644
+--- a/psyz/include/psyz/video.h
++++ b/psyz/include/psyz/video.h
+@@ -311,6 +311,10 @@ int Psyz_VideoHiresIndices4Active(int slot);
+  */
+ void Psyz_VideoSetPrecision(int on);
+ 
++/** Debug: VRAM read-backs since the last call (each waits for the GPU) and the
++ * milliseconds they took. */
++void Psyz_VideoDownloadStats(unsigned* count, double* ms);
++
+ /**
+  * @brief Precise geometry for a matrix the port knows more exactly
+  *
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index 368395c..5d5a966 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -541,6 +541,14 @@ bool InitPlatform() {
+         return false;
+     }
+     INFOF("SDL_GPU with driver %s", SDL_GetGPUDeviceDriver(device));
++    {
++        // which graphics chip draws (with two, it matters a lot at HD)
++        SDL_PropertiesID props = SDL_GetGPUDeviceProperties(device);
++        INFOF("graphics: %s (driver %s %s)",
++              SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_NAME_STRING, "unknown"),
++              SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, ""),
++              SDL_GetStringProperty(props, SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING, ""));
++    }
+ 
+ #ifdef PLATFORM_IOS
+     const SDL_WindowFlags window_flags =
+@@ -654,7 +662,14 @@ static void SyncNativeVramToScaled(int x, int y, int w, int h) {
+     SDL_BlitGPUTexture(cmd, &blit);
+ }
+ 
+-static void SyncScaledVramToNative(void) {
++// At HD the game draws into the scaled target; the native (1x) VRAM only
++// needs that picture when something reads it there: a texture taken from a
++// drawn area, a VRAM read-back or a MoveImage. Copying the whole drawing area
++// down after every batch cost a downscale of it per batch (dozens to hundreds
++// a frame, growing with the square of the resolution), so the drawn area is
++// only noted (scaled_dirty) and copied down when such a read comes.
++static SDL_Rect scaled_dirty = {0, 0, 0, 0};
++static void MarkScaledDirty(void) {
+     if (internal_res <= 1 || !scaled_vram_render) {
+         return;
+     }
+@@ -665,26 +680,55 @@ static void SyncScaledVramToNative(void) {
+     if (x1 <= x0 || y1 <= y0) {
+         return;
+     }
++    if (scaled_dirty.w > 0 && scaled_dirty.h > 0) {
++        int ux0 = x0 < scaled_dirty.x ? x0 : scaled_dirty.x;
++        int uy0 = y0 < scaled_dirty.y ? y0 : scaled_dirty.y;
++        int ux1 = x1 > scaled_dirty.x + scaled_dirty.w ? x1 : scaled_dirty.x + scaled_dirty.w;
++        int uy1 = y1 > scaled_dirty.y + scaled_dirty.h ? y1 : scaled_dirty.y + scaled_dirty.h;
++        x0 = ux0, y0 = uy0, x1 = ux1, y1 = uy1;
++    }
++    scaled_dirty = (SDL_Rect){x0, y0, x1 - x0, y1 - y0};
++}
++
++static bool ScaledDirtyOverlaps(int x, int y, int w, int h) {
++    return scaled_dirty.w > 0 && scaled_dirty.h > 0 && x < scaled_dirty.x + scaled_dirty.w &&
++           x + w > scaled_dirty.x && y < scaled_dirty.y + scaled_dirty.h &&
++           y + h > scaled_dirty.y;
++}
++
++static unsigned dbg_syncs, dbg_flushes, dbg_sync_px;
++static void SyncScaledVramToNative(void) {
++    if (scaled_dirty.w > 0) {
++        dbg_syncs++;
++        dbg_sync_px += (unsigned)(scaled_dirty.w * scaled_dirty.h);
++    }
++    if (internal_res <= 1 || !scaled_vram_render || scaled_dirty.w <= 0 ||
++        scaled_dirty.h <= 0) {
++        scaled_dirty = (SDL_Rect){0, 0, 0, 0};
++        return;
++    }
+     SDL_GPUCommandBuffer* cmd = AcquireCmd();
+     if (!cmd) {
+         return;
+     }
++    const SDL_Rect r = scaled_dirty;
+     const SDL_GPUBlitInfo blit = {
+         .source = {.texture = scaled_vram_render,
+-                   .x = (Uint32)(x0 * internal_res),
+-                   .y = (Uint32)(y0 * internal_res),
+-                   .w = (Uint32)((x1 - x0) * internal_res),
+-                   .h = (Uint32)((y1 - y0) * internal_res)},
++                   .x = (Uint32)(r.x * internal_res),
++                   .y = (Uint32)(r.y * internal_res),
++                   .w = (Uint32)(r.w * internal_res),
++                   .h = (Uint32)(r.h * internal_res)},
+         .destination = {.texture = vram_render,
+-                        .x = (Uint32)x0,
+-                        .y = (Uint32)y0,
+-                        .w = (Uint32)(x1 - x0),
+-                        .h = (Uint32)(y1 - y0)},
++                        .x = (Uint32)r.x,
++                        .y = (Uint32)r.y,
++                        .w = (Uint32)r.w,
++                        .h = (Uint32)r.h},
+         .load_op = SDL_GPU_LOADOP_LOAD,
+         .filter = SDL_GPU_FILTER_NEAREST,
+     };
+     SDL_BlitGPUTexture(cmd, &blit);
+-    MarkVramDirty((SDL_Rect){x0, y0, x1 - x0, y1 - y0});
++    MarkVramDirty(r);
++    scaled_dirty = (SDL_Rect){0, 0, 0, 0};
+ }
+ 
+ static bool CreateScaledVramTarget(unsigned n) {
+@@ -739,6 +783,7 @@ static void ApplyPendingInternalRes(void) {
+         return;
+     }
+     Draw_FlushBuffer(); // render pending prims with the old multiplier
++    SyncScaledVramToNative(); // keep what was drawn at the old multiplier
+     if (n > 1 && !CreateScaledVramTarget(n)) {
+         n = 1;
+         set_internal_res = 1;
+@@ -1016,6 +1061,11 @@ static void PlatformBackend_Present(void) {
+         if (frames % 300 == 0) {
+             pgxp_stat_total = pgxp_stat_hit = 0;
+         }
++        if (frames % 300 == 0 && getenv("PE_LOG_BATCHES")) {
++            INFOF("per frame: %.1f batches, %.1f copies of the HD picture to 1x (%.0f pixels)",
++                  dbg_flushes / 300.0, dbg_syncs / 300.0, dbg_sync_px / 300.0);
++            dbg_flushes = dbg_syncs = dbg_sync_px = 0;
++        }
+     }
+     SubmitFrame();
+ }
+@@ -1112,7 +1162,8 @@ void ResetPlatform(void) {
+     QuitPlatform();
+ }
+ 
+-static bool DownloadVramRegionAsRGBA8888(int x, int y, int w, int h, u8* out) {
++static bool DownloadVramRegionAsRGBA8888_(int x, int y, int w, int h, u8* out) {
++    SyncScaledVramToNative(); // the picture drawn at HD, before reading it
+     SDL_GPUCommandBuffer* cmd = AcquireCmd();
+     if (!cmd) {
+         return false;
+@@ -1144,6 +1195,23 @@ static bool DownloadVramRegionAsRGBA8888(int x, int y, int w, int h, u8* out) {
+     return true;
+ }
+ 
++// debug/pacing: VRAM read-backs (each one waits for the GPU)
++static unsigned dl_count;
++static double dl_ms;
++void Psyz_VideoDownloadStats(unsigned* count, double* ms) {
++    *count = dl_count;
++    *ms = dl_ms;
++    dl_count = 0;
++    dl_ms = 0.0;
++}
++static bool DownloadVramRegionAsRGBA8888(int x, int y, int w, int h, u8* out) {
++    Uint64 t0 = SDL_GetTicksNS();
++    bool ok = DownloadVramRegionAsRGBA8888_(x, y, w, h, out);
++    dl_count++;
++    dl_ms += (double)(SDL_GetTicksNS() - t0) / 1e6;
++    return ok;
++}
++
+ static unsigned char* AllocRgb888Region(int x, int y, int w, int h) {
+     if (!device || !vram_render) {
+         ERRORF("GPU device not initialized");
+@@ -1425,6 +1493,49 @@ int Draw_ExequeSync() { return 0; }
+ 
+ // optimization to avoid sampling the VRAM on an untextured batch draw
+ static bool batch_has_texture = false;
++// VRAM areas the textured primitives of this batch read (texture pages and
++// CLUTs, 1x VRAM pixels), so a batch that does not read a drawn area needs
++// no copy of it (SyncScaledVramToNative)
++#define BATCH_SAMPLES 16
++static SDL_Rect batch_sample[BATCH_SAMPLES];
++static int batch_samples;
++static bool batch_sample_all;
++static void NoteBatchSample(int x, int y, int w, int h) {
++    for (int i = 0; i < batch_samples; i++) {
++        if (batch_sample[i].x == x && batch_sample[i].y == y && batch_sample[i].w == w &&
++            batch_sample[i].h == h) {
++            return;
++        }
++    }
++    if (batch_samples == BATCH_SAMPLES) {
++        batch_sample_all = true;
++        return;
++    }
++    batch_sample[batch_samples++] = (SDL_Rect){x, y, w, h};
++}
++static void NoteSampledBy(const Vertex* v) {
++    unsigned t = v->t, depth = (t >> 7) & 3;
++    if (t & TPAGE_NOTEXTURE) {
++        return;
++    }
++    NoteBatchSample((int)(t & 15) * 64, (int)((t >> 4) & 1) * 256,
++                    depth == 0 ? 64 : (depth == 1 ? 128 : 256), 256);
++    if (depth < 2) {
++        NoteBatchSample((int)(v->c & 63) * 16, (int)((v->c >> 6) & 511), depth == 0 ? 16 : 256, 1);
++    }
++}
++static bool BatchSamplesScaledDirty(void) {
++    if (batch_sample_all) {
++        return true;
++    }
++    for (int i = 0; i < batch_samples; i++) {
++        if (ScaledDirtyOverlaps(batch_sample[i].x, batch_sample[i].y, batch_sample[i].w,
++                                batch_sample[i].h)) {
++            return true;
++        }
++    }
++    return false;
++}
+ static int pgxp_texture_correction(void) {
+     static int on = -1;
+     if (on < 0) {
+@@ -1771,6 +1882,9 @@ int Draw_PushPrim(u_long* packets, int max_len) {
+         Draw_EnqueueBuffer(4, 6);
+     }
+     batch_has_texture |= isTextured;
++    if (isTextured && n_vertices > 0) {
++        NoteSampledBy(vertex_cur - 1);
++    }
+     return max_len - len;
+ }
+ 
+@@ -2141,6 +2255,7 @@ void Draw_MoveImage(PS1_RECT* rect, unsigned int x, unsigned int y) {
+         return;
+     }
+     HiresTouch(dst_x, dst_y, copy_w, copy_h);
++    SyncScaledVramToNative(); // MoveImage copies the native VRAM
+ 
+     SDL_GPUCommandBuffer* cmd = AcquireCmd();
+     if (!cmd) {
+@@ -2184,12 +2299,15 @@ void Draw_ResetBuffer(void) {
+     vertex_cur = vertex_buf;
+     index_cur = index_buf;
+     batch_has_texture = false;
++    batch_samples = 0;
++    batch_sample_all = false;
+ }
+ 
+ void Draw_FlushBuffer(void) {
+     if (n_vertices == 0) {
+         return;
+     }
++    dbg_flushes++;
+     SDL_GPUCommandBuffer* cmd = AcquireCmd();
+     if (!cmd) {
+         return;
+@@ -2207,6 +2325,9 @@ void Draw_FlushBuffer(void) {
+     memcpy(map + idx_offset, index_buf, idx_size);
+     SDL_UnmapGPUTransferBuffer(device, vtx_transfer);
+ 
++    if (batch_has_texture && BatchSamplesScaledDirty()) {
++        SyncScaledVramToNative(); // a texture read from what was drawn
++    }
+     SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+     const SDL_GPUTransferBufferLocation vtx_src = {
+         .transfer_buffer = vtx_transfer};
+@@ -2347,6 +2468,6 @@ void Draw_FlushBuffer(void) {
+             hires[i].on = false;
+         }
+     }
+-    SyncScaledVramToNative();
++    MarkScaledDirty();
+     Draw_ResetBuffer();
+ }

@@ -1,0 +1,97 @@
+--- a/src/main/render/Render_EntityAndTexturedQuadFlow.c
++++ b/src/main/render/Render_EntityAndTexturedQuadFlow.c
+@@ -70,6 +70,12 @@
+  * average depth; culled faces get a null link. Quads and triangles of both
+  * packet classes are walked in turn through one shared descriptor cursor.
+  * The room overlays carry a copy that keeps the negative winding instead. */
++/* PC port: tag each corner with its vertex's exact position (precise_anim.c) */
++void pe_host_pa_corner(const unsigned *word, int index);
++void pe_host_pa_nclip(int *area, const unsigned *xy, int a, int b, int c);
++void pe_host_pa_debug_model(const void *entity);
++#define PE_CORNER(field, index) pe_host_pa_corner((const unsigned *)&(field), (index))
++
+ void Render_DrawTexturedQuads(RenderObjectEntity *entity) {
+     int i;
+     s32 *area = (s32 *)0x1F800000;
+@@ -83,6 +89,7 @@
+     int a, b, c, d;
+     u8 *packet;
+ 
++    pe_host_pa_debug_model(entity);
+     i = 0;
+     while (i < entity->header->packet34_count) {
+         a = record->lookup_indices[0];
+@@ -100,6 +107,7 @@
+         packet = (u8 *)((RenderPacket34 *)packets + slot);
+         d = record->lookup_indices[3];
+         gte_stmac0(area);
++        pe_host_pa_nclip((int *)area, xy, a, b, c);
+         if (*area > 0) {
+             int depth = z[a] + z[b];
+             depth += z[c];
+@@ -112,6 +120,10 @@
+                 ((RenderPacket34 *)packet)->sxy1 = xy1;
+                 ((RenderPacket34 *)packet)->sxy2 = xy2;
+                 ((RenderPacket34 *)packet)->sxy3 = xy[d];
++                PE_CORNER(((RenderPacket34 *)packet)->sxy0, a);
++                PE_CORNER(((RenderPacket34 *)packet)->sxy1, b);
++                PE_CORNER(((RenderPacket34 *)packet)->sxy2, c);
++                PE_CORNER(((RenderPacket34 *)packet)->sxy3, d);
+             }
+         } else {
+             RENDER_SETADDR(packet, 0);
+@@ -137,6 +149,7 @@
+         gte_nclip_now();
+         packet = (u8 *)((RenderPacket28 *)packets + slot);
+         gte_stmac0(area);
++        pe_host_pa_nclip((int *)area, xy, a, b, c);
+         if (*area > 0) {
+             int depth = z[a] + z[b] + z[c];
+             depth = depth / 3 >> 2;
+@@ -146,6 +159,9 @@
+                 ((RenderPacket28 *)packet)->sxy0 = xy0;
+                 ((RenderPacket28 *)packet)->sxy1 = xy1;
+                 ((RenderPacket28 *)packet)->sxy2 = xy2;
++                PE_CORNER(((RenderPacket28 *)packet)->sxy0, a);
++                PE_CORNER(((RenderPacket28 *)packet)->sxy1, b);
++                PE_CORNER(((RenderPacket28 *)packet)->sxy2, c);
+             }
+         } else {
+             RENDER_SETADDR(packet, 0);
+@@ -172,6 +188,7 @@
+         packet = (u8 *)((RenderPacket24 *)packets + slot);
+         d = record->lookup_indices[3];
+         gte_stmac0(area);
++        pe_host_pa_nclip((int *)area, xy, a, b, c);
+         if (*area > 0) {
+             int depth = z[a] + z[b];
+             depth += z[c];
+@@ -184,6 +201,10 @@
+                 ((RenderPacket24 *)packet)->sxy1 = xy1;
+                 ((RenderPacket24 *)packet)->sxy2 = xy2;
+                 ((RenderPacket24 *)packet)->sxy3 = xy[d];
++                PE_CORNER(((RenderPacket24 *)packet)->sxy0, a);
++                PE_CORNER(((RenderPacket24 *)packet)->sxy1, b);
++                PE_CORNER(((RenderPacket24 *)packet)->sxy2, c);
++                PE_CORNER(((RenderPacket24 *)packet)->sxy3, d);
+             }
+         } else {
+             RENDER_SETADDR(packet, 0);
+@@ -209,6 +230,7 @@
+         gte_nclip_now();
+         packet = (u8 *)((RenderPacket1C *)packets + slot);
+         gte_stmac0(area);
++        pe_host_pa_nclip((int *)area, xy, a, b, c);
+         if (*area > 0) {
+             int depth = z[a] + z[b] + z[c];
+             depth = depth / 3 >> 2;
+@@ -218,6 +240,9 @@
+                 ((RenderPacket1C *)packet)->sxy0 = xy0;
+                 ((RenderPacket1C *)packet)->sxy1 = xy1;
+                 ((RenderPacket1C *)packet)->sxy2 = xy2;
++                PE_CORNER(((RenderPacket1C *)packet)->sxy0, a);
++                PE_CORNER(((RenderPacket1C *)packet)->sxy1, b);
++                PE_CORNER(((RenderPacket1C *)packet)->sxy2, c);
+             }
+         } else {
+             RENDER_SETADDR(packet, 0);

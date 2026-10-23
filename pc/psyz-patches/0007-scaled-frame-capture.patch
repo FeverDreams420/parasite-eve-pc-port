@@ -1,0 +1,106 @@
+diff --git a/psyz/include/psyz/video.h b/psyz/include/psyz/video.h
+index ca7300e..99d8d72 100644
+--- a/psyz/include/psyz/video.h
++++ b/psyz/include/psyz/video.h
+@@ -231,6 +231,19 @@ int Psyz_VideoStats(PsyzVideoStats* stats);
+  */
+ unsigned char* Psyz_VideoAllocCapturedFrame(int* w, int* h);
+ 
++/**
++ * @brief Capture the displayed frame at the internal resolution
++ *
++ * Like Psyz_VideoAllocCapturedFrame, but read from the scaled render target,
++ * so the size is the display size times the internal resolution. At 1x, and
++ * for 24-bit (movie) display, it is the same as Psyz_VideoAllocCapturedFrame.
++ *
++ * @param w Output frame width
++ * @param h Output frame height
++ * @return NULL on failure, or RGB888 buffer to be destroyed with free(ptr)
++ */
++unsigned char* Psyz_VideoAllocCapturedFrameScaled(int* w, int* h);
++
+ /**
+  * @brief Dump the whole video memory plane as RGB888
+  *
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index 938a0bd..6bd8165 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -1104,6 +1104,77 @@ unsigned char* Psyz_VideoAllocCapturedFrame(int* w, int* h) {
+     return rows;
+ }
+ 
++unsigned char* Psyz_VideoAllocCapturedFrameScaled(int* w, int* h) {
++    const int n = (int)internal_res;
++    if (n <= 1 || !scaled_vram_render || disp_rgb24) {
++        return Psyz_VideoAllocCapturedFrame(w, h);
++    }
++    int x = display_area.x, y = display_area.y;
++    int dw = display_size.x, dh = display_size.y;
++    if (x + dw > VRAM_W) {
++        dw = VRAM_W - x;
++    }
++    if (y + dh > VRAM_H) {
++        dh = VRAM_H - y;
++    }
++    if (dw <= 0 || dh <= 0) {
++        return NULL;
++    }
++    const int sw = dw * n, sh = dh * n;
++    const SDL_GPUTransferBufferCreateInfo info = {
++        .usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,
++        .size = (Uint32)(sw * sh * 4),
++    };
++    SDL_GPUTransferBuffer* tb = SDL_CreateGPUTransferBuffer(device, &info);
++    unsigned char* out = calloc((size_t)sw * sh, 3);
++    SDL_GPUCommandBuffer* cmd = tb && out ? AcquireCmd() : NULL;
++    if (!cmd) {
++        if (tb) {
++            SDL_ReleaseGPUTransferBuffer(device, tb);
++        }
++        free(out);
++        return NULL;
++    }
++    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
++    const SDL_GPUTextureRegion region = {
++        .texture = scaled_vram_render,
++        .x = (Uint32)(x * n),
++        .y = (Uint32)(y * n),
++        .w = (Uint32)sw,
++        .h = (Uint32)sh,
++        .d = 1,
++    };
++    const SDL_GPUTextureTransferInfo transfer = {.transfer_buffer = tb};
++    SDL_DownloadFromGPUTexture(copy, &region, &transfer);
++    SDL_EndGPUCopyPass(copy);
++    SubmitCmdAndWait();
++    const u8* map = SDL_MapGPUTransferBuffer(device, tb, false);
++    if (!map) {
++        SDL_ReleaseGPUTransferBuffer(device, tb);
++        free(out);
++        return NULL;
++    }
++    // only the visible lines, screen_top lines down, as on the TV
++    int top, lines;
++    VisibleRows(&top, &lines);
++    for (int row = top * n; row < (top + lines) * n && row < sh; row++) {
++        const u8* src = map + (size_t)(row - top * n) * sw * 4;
++        unsigned char* dst = out + (size_t)row * sw * 3;
++        for (int i = 0; i < sw; i++) {
++            dst[0] = src[0];
++            dst[1] = src[1];
++            dst[2] = src[2];
++            dst += 3;
++            src += 4;
++        }
++    }
++    SDL_UnmapGPUTransferBuffer(device, tb);
++    SDL_ReleaseGPUTransferBuffer(device, tb);
++    *w = sw;
++    *h = sh;
++    return out;
++}
++
+ unsigned char* Psyz_VideoAllocVramDump(int* w, int* h) {
+     *w = VRAM_W;
+     *h = VRAM_H;

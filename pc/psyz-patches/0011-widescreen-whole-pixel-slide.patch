@@ -1,0 +1,17 @@
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index ac475f7..7f7dc82 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -932,8 +932,10 @@ static void PlatformBackend_Present(void) {
+                     }
+                     float half = WsHalfView(game_aspect);
+                     float view_w = 2.0f * half * WS_SQUEEZE;
+-                    float max_shift = half - (float)display_size.x * 0.5f;
+-                    // never slide the game's own screen (menus, text) out
++                    // never slide the game's own screen (menus, text) out,
++                    // but allow whole game pixels (rounded up), so the
++                    // slide at a room's end has no last uneven step
++                    float max_shift = ceilf(half - (float)display_size.x * 0.5f);
+                     if (max_shift < 0.0f) {
+                         max_shift = 0.0f;
+                     }

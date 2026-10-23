@@ -47,19 +47,20 @@ is a fresh start to get rid of the emulation layer completely.
 - 🔧 Save anywhere: **Save Game** in the menu (and F5) works. Next is putting
   Aya back exactly where she was when you load.
 - ⬜ Native saves with no memory card files
-- ⬜ In-game settings menu for every mod and graphics option
+- 🔧 In-game settings menu for every mod and graphics option (graphics are in
+  Set User Preferences)
 - ⬜ Controller remapping, Xbox button icons, keyboard and mouse
 - ⬜ Brightness and contrast
 - ⬜ One-click build, and a release that only needs your own disc
 
-## 5. Graphics, staying faithful ⬜
+## 5. Graphics, staying faithful 🔧
 
 In this order:
 
-1. ⬜ Higher internal resolution for 3D, text and effects. The pre-rendered
+1. ✅ Higher internal resolution (8x) for 3D, text and effects. The pre-rendered
    backgrounds stay as they are.
-2. ⬜ Smooth geometry so models stop wobbling (like PGXP in emulators).
-3. ⬜ Widescreen. The 3D can be widened, but the backgrounds are 4:3 with
-   nothing past the edges, so I still need to figure out how to fill the sides
-   without replacing any art.
+2. ✅ Smooth geometry so models stop wobbling (like PGXP in emulators).
+3. ✅ Widescreen (with HD): 16:9 wherever a room's own background is wide
+   enough, sliding with the camera. Rooms that are narrower get even black
+   bars on both sides. No art is stretched or replaced.
 4. ⬜ Maybe a fully native renderer, only if 1 to 3 aren't enough.

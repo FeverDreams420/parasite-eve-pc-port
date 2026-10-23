@@ -1,0 +1,153 @@
+diff --git a/psyz/include/psyz/video.h b/psyz/include/psyz/video.h
+index 63ee212..7c6a474 100644
+--- a/psyz/include/psyz/video.h
++++ b/psyz/include/psyz/video.h
+@@ -311,6 +311,19 @@ int Psyz_VideoHiresIndices4Active(int slot);
+  */
+ void Psyz_VideoSetPrecision(int on);
+ 
++/**
++ * @brief Precise geometry for a matrix the port knows more exactly
++ *
++ * The game builds its model matrices with whole-number steps, so body parts
++ * shake by a fraction of a unit as a model moves. A port that keeps the same
++ * matrix at full precision passes it here right after loading the integer
++ * one into the GTE: r is the rotation in the GTE's units (4096 = 1.0), row
++ * by row, t the translation. Projections use it for their exact positions
++ * while the GTE still holds that integer matrix.
++ */
++void Psyz_PgxpSetFloatMatrix(const float r[9], const float t[3]);
++void Psyz_PgxpClearFloatMatrix(void);
++
+ void Psyz_VideoSetWidescreen(int on);
+ int Psyz_VideoGetWidescreen(void);
+ 
+diff --git a/psyz/src/psyz/libgte.c b/psyz/src/psyz/libgte.c
+index b0c0b18..44a6b10 100644
+--- a/psyz/src/psyz/libgte.c
++++ b/psyz/src/psyz/libgte.c
+@@ -1,4 +1,6 @@
+ #include <assert.h>
++#include <stdlib.h>
++#include <string.h>
+ #ifdef _MSC_VER
+ #include <intrin.h>
+ #endif
+@@ -1816,7 +1818,16 @@ static inline unsigned pgxp_hash(unsigned k) {
+ 
+ void Psyz_VideoSetPrecision(int on) { pgxp_on = on != 0; }
+ int Psyz_PgxpEnabled(void) { return pgxp_on; }
+-void Psyz_PgxpNewFrame(void) { pgxp_gen++; }
++static unsigned pgxp_fm_kept, pgxp_fm_dropped; // debug (PE_LOG_PGXP)
++void Psyz_PgxpNewFrame(void) {
++    static unsigned frames;
++    pgxp_gen++;
++    if (++frames % 300 == 0 && getenv("PE_LOG_PGXP")) {
++        INFOF("precise geometry: %u full-precision vertices kept, %u too far off", pgxp_fm_kept,
++              pgxp_fm_dropped);
++        pgxp_fm_kept = pgxp_fm_dropped = 0;
++    }
++}
+ 
+ static void pgxp_record(int sx, int sy, double x, double y) {
+     unsigned key = SXY(sx, sy), h = pgxp_hash(key), i, slot = h;
+@@ -1833,6 +1844,32 @@ static void pgxp_record(int sx, int sy, double x, double y) {
+     pgxp[slot].y = (float)y;
+ }
+ 
++// A matrix given at full precision for the next projections
++// (Psyz_PgxpSetFloatMatrix): used while the GTE still holds the integer
++// matrix it was given with, so another matrix loaded later is never mixed up
++// with it.
++static int pgxp_fm_on;
++static MATRIX pgxp_fm_int;
++static double pgxp_fm_r[3][3], pgxp_fm_t[3];
++
++void Psyz_PgxpSetFloatMatrix(const float r[9], const float t[3]) {
++    int i, j;
++    pgxp_fm_on = 1;
++    pgxp_fm_int = M;
++    for (i = 0; i < 3; i++) {
++        for (j = 0; j < 3; j++) {
++            pgxp_fm_r[i][j] = r[i * 3 + j];
++        }
++        pgxp_fm_t[i] = t[i];
++    }
++}
++
++void Psyz_PgxpClearFloatMatrix(void) { pgxp_fm_on = 0; }
++
++static inline int pgxp_fm_current(void) {
++    return pgxp_fm_on && !memcmp(&pgxp_fm_int, &M, sizeof(MATRIX));
++}
++
+ int Psyz_PgxpLookup(unsigned int sxy, float* x, float* y) {
+     unsigned h = pgxp_hash(sxy), i;
+     if (!pgxp_on) {
+@@ -1849,31 +1886,45 @@ int Psyz_PgxpLookup(unsigned int sxy, float* x, float* y) {
+     return 0;
+ }
+ 
++static int pgxp_try(int f, double x, double y, double z, int sx, int sy) {
++    double r[3][3], t[3], lo = f ? 4.0 : 1.0;
++    int i, j;
++    for (i = 0; i < 3; i++) {
++        for (j = 0; j < 3; j++) {
++            r[i][j] = f ? pgxp_fm_r[i][j] : (double)M.m[i][j];
++        }
++        t[i] = f ? pgxp_fm_t[i] : (double)M.t[i];
++    }
++    double pz = t[2] + (r[2][0] * x + r[2][1] * y + r[2][2] * z) / 4096.0;
++    if (pz < 1.0) {
++        return 0;
++    }
++    double px = t[0] + (r[0][0] * x + r[0][1] * y + r[0][2] * z) / 4096.0;
++    double py = t[1] + (r[1][0] * x + r[1][1] * y + r[1][2] * z) / 4096.0;
++    double psx = OFX + (double)H * px / pz;
++    double psy = OFY + (double)H * py / pz;
++    // full precision moves a vertex a few pixels at most
++    if (psx > sx - lo && psx < sx + 1.0 + lo && psy > sy - lo && psy < sy + 1.0 + lo) {
++        pgxp_record(sx, sy, psx, psy);
++        return 1;
++    }
++    return 0;
++}
++
+ // The exact projection of the vertex just transformed (sf = 1): view space
+-// from the full products, divided in floating point. Kept only when it
+-// rounds down to the GTE's own result, so saturated or clipped vertices and
+-// odd cases keep their integer position.
++// from the full products (with the matrix at full precision when the port
++// gave one), divided in floating point. Kept only when it lands next to the
++// GTE's own result, so saturated or clipped vertices and odd cases keep
++// their integer position.
+ #define PGXP_VERTEX(sf, x, y, z, sx, sy)                                       \
+     do {                                                                       \
+         if (pgxp_on && (sf)) {                                                 \
+-            double pv_z = ((double)M.t[2] * 4096.0 + (double)M.m[2][0] * (x) + \
+-                           (double)M.m[2][1] * (y) + (double)M.m[2][2] * (z)) / \
+-                          4096.0;                                              \
+-            if (pv_z >= 1.0) {                                                 \
+-                double pv_x = ((double)M.t[0] * 4096.0 +                       \
+-                               (double)M.m[0][0] * (x) +                       \
+-                               (double)M.m[0][1] * (y) +                       \
+-                               (double)M.m[0][2] * (z)) / 4096.0;              \
+-                double pv_y = ((double)M.t[1] * 4096.0 +                       \
+-                               (double)M.m[1][0] * (x) +                       \
+-                               (double)M.m[1][1] * (y) +                       \
+-                               (double)M.m[1][2] * (z)) / 4096.0;              \
+-                double pv_sx = OFX + (double)H * pv_x / pv_z;                  \
+-                double pv_sy = OFY + (double)H * pv_y / pv_z;                  \
+-                if (pv_sx > (sx) - 1.0 && pv_sx < (sx) + 2.0 &&                \
+-                    pv_sy > (sy) - 1.0 && pv_sy < (sy) + 2.0) {                \
+-                    pgxp_record((sx), (sy), pv_sx, pv_sy);                     \
+-                }                                                              \
++            int pv_f = pgxp_fm_current();                                      \
++            if (pv_f && pgxp_try(1, (x), (y), (z), (sx), (sy))) {              \
++                pgxp_fm_kept++;                                                \
++            } else {                                                           \
++                pgxp_fm_dropped += pv_f;                                       \
++                pgxp_try(0, (x), (y), (z), (sx), (sy));                        \
+             }                                                                  \
+         }                                                                      \
+     } while (0)

@@ -236,6 +236,17 @@ void pe_mdec_in(uint32_t *data, uint32_t size) {
     }
 }
 
+double pe_host_now_s(void);
+static double g_mdec_s; /* decoding time, for the pacing log (forward.c) */
+static unsigned g_mdec_n;
+static unsigned g_mdec_total; /* decodes since start, for the movie switch (settings.c) */
+unsigned pe_mdec_decodes(void) { return g_mdec_total; }
+void pe_mdec_take(double *ms, unsigned *n) {
+    *ms = g_mdec_s * 1000.0;
+    *n = g_mdec_n;
+    g_mdec_s = 0.0;
+    g_mdec_n = 0;
+}
 void pe_mdec_out(uint32_t *buf, uint32_t size) {
     int depth = (g_cmd >> 27) & 3;
     static int logged_out;
@@ -248,6 +259,7 @@ void pe_mdec_out(uint32_t *buf, uint32_t size) {
     uint8_t *dst = (uint8_t *)buf;
     uint32_t bytes = size * 4, done = 0;
     int i;
+    double t_dec = pe_host_now_s();
     while (done < bytes) {
         if (!g_src || !decode_macroblock(px)) {
             memset(dst + done, 0, bytes - done);
@@ -269,6 +281,9 @@ void pe_mdec_out(uint32_t *buf, uint32_t size) {
             }
         }
     }
+    g_mdec_s += pe_host_now_s() - t_dec;
+    g_mdec_n++;
+    g_mdec_total++;
     /* On hardware the DMA channel 1 interrupt fires after the transfer, so
      * the callback that started this transfer finishes first (it uploads the
      * previous slice after starting the next). The output is produced at

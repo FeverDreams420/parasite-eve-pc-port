@@ -1,14 +1,16 @@
 --- a/src/main/menu/Menu_ContextHelpFlow.c
 +++ b/src/main/menu/Menu_ContextHelpFlow.c
-@@ -4,6 +4,7 @@
+@@ -4,6 +4,9 @@
  #include "pe1/menu_context_help.h"
  
  void Menu_DrawContextHelpText(MenuWidgetNode *panel);
 +unsigned char *pe_host_save_game_text(void);
++unsigned char *pe_host_menu_text(int id);
++extern int pe_host_menu_popup_kind; /* 0 Graphics, 1 Borders */
  
  void Menu_CreateContextHelpPanel(void) {
      void *node = MenuWidget_FindByModeAndSelectedBase(1, 0x13);
-@@ -46,7 +47,7 @@
+@@ -46,7 +49,7 @@
              if (Menu_GetBattleEquipMode())
                  mask = D_8009CEF0 & 0x1F;
              else
@@ -17,7 +19,7 @@
              i = -1;
              do {
                  int bit;
-@@ -57,8 +58,8 @@
+@@ -57,8 +60,8 @@
                  index -= bit;
                  i++;
                  mask >>= 1;
@@ -28,3 +30,21 @@
              break;
          case 5:
              if (index < 0)
+@@ -170,9 +173,17 @@
+         case 32:
+             if (index < 4)
+                 text = Str_LookupTable10(index + 0x31);
++            else if (index == 4)
++                text = pe_host_menu_text(3); /* host: the Graphics row */
++            else if (index == 5)
++                text = pe_host_menu_text(9); /* host: the Borders row */
+             else
+                 text = 0;
+             break;
++        case 43: /* host: the Graphics (HD / Original) or Borders (On / Off) popup */
++            if (index >= 0 && index < 2)
++                text = pe_host_menu_text((pe_host_menu_popup_kind ? 10 : 4) + index);
++            break;
+         case 33:
+             text = Str_LookupTable10(index + 0x3A);
+             break;

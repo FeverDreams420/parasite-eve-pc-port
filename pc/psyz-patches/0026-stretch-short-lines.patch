@@ -1,0 +1,153 @@
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index 0ec01f8..c68d00b 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -169,6 +169,9 @@ static bool border_failed = false;
+ static bool border_test_format = false; // debug PE_PRESENT_TEST: RGBA8 target
+ // debug: Psyz_VideoPresentTestNext, the next present is saved as present-test.ppm
+ static bool present_test_armed = false;
++// debug: the soft borders' small picture, read back with the screen snapshot
++static SDL_GPUTransferBuffer* border_dbg_tb = NULL;
++static int border_dbg_w, border_dbg_h;
+ static char present_test_path[256] = "present-test.ppm";
+ void Psyz_VideoPresentTestNext(const char* path) {
+     present_test_armed = true;
+@@ -1341,6 +1344,71 @@ static void PlatformBackend_Present(void) {
+                                 a = b;
+                             }
+                         }
++                        // Lines whose stored picture stops a little short of where
++                        // the rest of the picture ends (ws_pl / ws_pr, or the
++                        // window's edge if nearer): the museum lab's bottom 11
++                        // lines end in a diagonal up to 24 pixels short on the
++                        // right, which the soft border filled with a lighter,
++                        // mirrored patch in the corner. Up to 32 game pixels,
++                        // each line's own last pixel is stretched across the gap
++                        // (runs of lines with the same end in one blit).
++                        {
++                            const float win_l = half_w + (ws_x0 - half_w) / WS_SQUEEZE;
++                            const float win_r = half_w + (ws_x0 + ws_vw - half_w) / WS_SQUEEZE;
++                            for (int side = 0; side < 2; side++) {
++                                float* e = side ? er : el;
++                                float goal = side ? (ws_pr < win_r ? ws_pr : win_r)
++                                                  : (ws_pl > win_l ? ws_pl : win_l);
++                                // the window reaching a pixel or two past the
++                                // picture (its slide is whole pixels, its width
++                                // is not): a soft bar that thin blinked as a
++                                // dark strip down the edge on the PC (museum
++                                // lab), so the picture is stretched to the edge
++                                if (side ? win_r - goal < 4.0f : goal - win_l < 4.0f) {
++                                    goal = side ? win_r : win_l;
++                                }
++                                for (int a = 0; a < nl;) {
++                                    int b = a + 1;
++                                    while (b < nl && e[b] == e[a] && el[b] <= er[b]) {
++                                        b++;
++                                    }
++                                    const float gap = side ? goal - e[a] : e[a] - goal;
++                                    if (el[a] > er[a] || gap < 1.0f || gap > 32.0f) {
++                                        a = b;
++                                        continue;
++                                    }
++                                    // source: the line's last picture pixel (one
++                                    // game pixel wide); destination: the gap
++                                    const float px0 = side ? e[a] - 1.0f : e[a];
++                                    const float g0 = side ? e[a] : goal, g1 = side ? goal : e[a];
++                                    const float sb = half_w + (px0 - half_w) * WS_SQUEEZE;
++                                    const float x0b = half_w + (g0 - half_w) * WS_SQUEEZE;
++                                    const float x1b = half_w + (g1 - half_w) * WS_SQUEEZE;
++                                    const Uint32 ux = (Uint32)(base + sb * n + 0.5f);
++                                    const Uint32 uw = (Uint32)(WS_SQUEEZE * n + 0.5f);
++                                    const Uint32 dx = (Uint32)((float)dst.x + (x0b - ws_x0) * scale + 0.5f);
++                                    const Uint32 dx1 = (Uint32)((float)dst.x + (x1b - ws_x0) * scale + 0.5f);
++                                    const Uint32 dy = (Uint32)(sy0 + (sy1 - sy0) * (float)a / (float)lines + 0.5f);
++                                    const Uint32 dy1 = (Uint32)(sy0 + (sy1 - sy0) * (float)b / (float)lines + 0.5f);
++                                    if (uw > 0 && dx1 > dx && dy1 > dy) {
++                                        const SDL_GPUBlitInfo fill = {
++                                            .source = {.texture = src.texture, .x = ux,
++                                                       .y = (Uint32)v0 + (Uint32)a * n,
++                                                       .w = uw, .h = (Uint32)(b - a) * n},
++                                            .destination = {.texture = swapchain, .x = dx, .y = dy,
++                                                            .w = dx1 - dx, .h = dy1 - dy},
++                                            .load_op = SDL_GPU_LOADOP_LOAD,
++                                            .filter = SDL_GPU_FILTER_NEAREST,
++                                        };
++                                        SDL_BlitGPUTexture(cmd, &fill);
++                                    }
++                                    for (int r = a; r < b; r++) {
++                                        e[r] = goal;
++                                    }
++                                    a = b;
++                                }
++                            }
++                        }
+                         int r0 = 0;
+                         while (r0 < lines) {
+                             // the picture's ends on line r0, then how many
+@@ -1421,6 +1489,41 @@ static void PlatformBackend_Present(void) {
+                             }
+                         }
+                         DrawBorderBars(cmd, swapchain, sc_w, sc_h, small, aw, ah, bars, nb);
++                        if (test_tex && swapchain == test_tex) {
++                            // debug (F12 screen snapshot): what the soft
++                            // borders drew and the small picture they sampled
++                            INFOF("borders: window x0 %.2f w %.2f, picture %.1f..%.1f, sample area "
++                                  "%.1f,%.1f %.1fx%.1f -> copy %.0fx%.0f in %.0fx%.0f%s",
++                                  ws_x0, ws_vw, ws_pl, ws_pr, rx, ry, rw, rh, cw, ch, aw, ah,
++                                  small == src.texture ? " (no copy)" : "");
++                            for (int i = 0; i < nb; i++) {
++                                const BorderBar* b = &bars[i];
++                                INFOF("border %d: screen %.1f,%.1f..%.1f,%.1f u %.2f..%.2f v %.2f..%.2f "
++                                      "area %.2f,%.2f..%.2f,%.2f bright %.2f..%.2f",
++                                      i, b->x0, b->y0, b->x1, b->y1, b->u_at_x0, b->u_at_x1, b->v0,
++                                      b->v1, b->au0, b->av0, b->au1, b->av1, b->bright_x0,
++                                      b->bright_x1);
++                            }
++                            if (small != src.texture && !border_dbg_tb) {
++                                const SDL_GPUTransferBufferCreateInfo bi = {
++                                    .usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,
++                                    .size = (Uint32)(aw * ah * 4)};
++                                border_dbg_tb = SDL_CreateGPUTransferBuffer(device, &bi);
++                                if (border_dbg_tb) {
++                                    border_dbg_w = (int)aw;
++                                    border_dbg_h = (int)ah;
++                                    SDL_GPUCopyPass* cp = SDL_BeginGPUCopyPass(cmd);
++                                    const SDL_GPUTextureRegion rg = {.texture = small,
++                                                                     .w = (Uint32)aw,
++                                                                     .h = (Uint32)ah,
++                                                                     .d = 1};
++                                    const SDL_GPUTextureTransferInfo ti = {.transfer_buffer =
++                                                                               border_dbg_tb};
++                                    SDL_DownloadFromGPUTexture(cp, &rg, &ti);
++                                    SDL_EndGPUCopyPass(cp);
++                                }
++                            }
++                        }
+                     }
+                 }
+             }
+@@ -1520,6 +1623,24 @@ static void PlatformBackend_Present(void) {
+         }
+         SDL_UnmapGPUTransferBuffer(device, tb);
+         SDL_ReleaseGPUTransferBuffer(device, tb);
++        if (border_dbg_tb) {
++            const unsigned char* bp = SDL_MapGPUTransferBuffer(device, border_dbg_tb, false);
++            char bpath[300];
++            snprintf(bpath, sizeof(bpath), "%s-borders.ppm", present_test_path);
++            FILE* bf = bp ? fopen(bpath, "wb") : NULL;
++            if (bf) {
++                fprintf(bf, "P6\n%d %d\n255\n", border_dbg_w, border_dbg_h);
++                for (int i = 0; i < border_dbg_w * border_dbg_h; i++) {
++                    fwrite(bp + i * 4, 1, 3, bf);
++                }
++                fclose(bf);
++            }
++            if (bp) {
++                SDL_UnmapGPUTransferBuffer(device, border_dbg_tb);
++            }
++            SDL_ReleaseGPUTransferBuffer(device, border_dbg_tb);
++            border_dbg_tb = NULL;
++        }
+         if (read_tex != test_tex) {
+             SDL_ReleaseGPUTexture(device, read_tex);
+         }

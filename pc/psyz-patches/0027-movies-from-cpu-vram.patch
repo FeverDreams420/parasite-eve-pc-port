@@ -1,0 +1,278 @@
+diff --git a/psyz/include/psyz/video.h b/psyz/include/psyz/video.h
+index 595a0c6..c1f7d1a 100644
+--- a/psyz/include/psyz/video.h
++++ b/psyz/include/psyz/video.h
+@@ -397,6 +397,13 @@ int Psyz_VideoRecordStart(const char* path, int w, int h);
+ void Psyz_VideoRecordTag(unsigned frame);
+ /** @brief Ends the recording: waits for the last read-backs, closes the file. */
+ void Psyz_VideoRecordStop(void);
++/** @brief 1 while the display is in 24-bit mode (movies). */
++int Psyz_VideoGetRgb24(void);
++/** @brief Debug timing since the last call: [0] uploads (LoadImage), [1] their
++ * copies up to the HD picture, [2] building the 24-bit picture, [3] presents,
++ * [4] MoveImage, [5] ClearImage, [6] copies of the HD picture down to 1x,
++ * [7] drawing batches. */
++void Psyz_VideoProfileTake(double ms[8], unsigned n[8]);
+ int Psyz_VideoGetWidescreen(void);
+ 
+ /**
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index c68d00b..41a9df1 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -755,10 +755,59 @@ static void MarkVramDirty(SDL_Rect r) {
+ static void ResetVramDirty(void) { vram_dirty = (SDL_Rect){0, 0, 0, 0}; }
+ 
+ // mirror a native VRAM region into the scaled render target
++// debug timing for the pacing log (Psyz_VideoProfileTake): uploads, copies
++// of uploads up to HD, building the 24-bit picture, presents
++static double prof_ms[8];
++static unsigned prof_n[8];
++void Psyz_VideoProfileTake(double ms[8], unsigned n[8]) {
++    for (int i = 0; i < 8; i++) {
++        ms[i] = prof_ms[i];
++        n[i] = prof_n[i];
++        prof_ms[i] = 0.0;
++        prof_n[i] = 0;
++    }
++}
++#define PROF_BEGIN Uint64 prof_t0 = SDL_GetTicksNS()
++#define PROF_END(i) (prof_ms[i] += (double)(SDL_GetTicksNS() - prof_t0) / 1e6, prof_n[i]++)
++
++static void SyncNativeVramToScaledNow(int x, int y, int w, int h);
++// While a movie shows (24-bit display, drawn from disp24_tex, never from the
++// HD VRAM), uploads are not copied up to the HD VRAM one by one: at 8x each
++// copy is a pass over the 8192x4096 target, 20 a movie frame, and the
++// graphics card fell behind (movies lagged at HD only; uploads took about
++// 11 ms a frame). Their area is gathered and copied once, before the
++// HD VRAM is used again (drawing, a read of it, or the 15-bit display).
++static SDL_Rect hd_pending = {0, 0, 0, 0};
++static void HdCatchUp(void) {
++    if (hd_pending.w > 0 && hd_pending.h > 0) {
++        const SDL_Rect r = hd_pending;
++        hd_pending = (SDL_Rect){0, 0, 0, 0};
++        SyncNativeVramToScaledNow(r.x, r.y, r.w, r.h);
++    }
++}
+ static void SyncNativeVramToScaled(int x, int y, int w, int h) {
+     if (internal_res <= 1 || !scaled_vram_render || w <= 0 || h <= 0) {
+         return;
+     }
++    if (disp_rgb24) {
++        if (hd_pending.w <= 0 || hd_pending.h <= 0) {
++            hd_pending = (SDL_Rect){x, y, w, h};
++        } else {
++            int x0 = SDL_min(hd_pending.x, x), y0 = SDL_min(hd_pending.y, y);
++            int x1 = SDL_max(hd_pending.x + hd_pending.w, x + w);
++            int y1 = SDL_max(hd_pending.y + hd_pending.h, y + h);
++            hd_pending = (SDL_Rect){x0, y0, x1 - x0, y1 - y0};
++        }
++        return;
++    }
++    HdCatchUp();
++    SyncNativeVramToScaledNow(x, y, w, h);
++}
++static void SyncNativeVramToScaledNow(int x, int y, int w, int h) {
++    if (internal_res <= 1 || !scaled_vram_render || w <= 0 || h <= 0) {
++        return;
++    }
++    PROF_BEGIN;
+     SDL_GPUCommandBuffer* cmd = AcquireCmd();
+     if (!cmd) {
+         return;
+@@ -778,6 +827,7 @@ static void SyncNativeVramToScaled(int x, int y, int w, int h) {
+         .filter = SDL_GPU_FILTER_NEAREST,
+     };
+     SDL_BlitGPUTexture(cmd, &blit);
++    PROF_END(1);
+ }
+ 
+ // At HD the game draws into the scaled target; the native (1x) VRAM only
+@@ -815,7 +865,14 @@ static bool ScaledDirtyOverlaps(int x, int y, int w, int h) {
+ }
+ 
+ static unsigned dbg_syncs, dbg_flushes, dbg_sync_px;
++static void SyncScaledVramToNative_(void);
+ static void SyncScaledVramToNative(void) {
++    PROF_BEGIN;
++    SyncScaledVramToNative_();
++    PROF_END(6);
++}
++static void SyncScaledVramToNative_(void) {
++    HdCatchUp(); // the HD VRAM must hold the uploads before it is copied down
+     if (scaled_dirty.w > 0) {
+         dbg_syncs++;
+         dbg_sync_px += (unsigned)(scaled_dirty.w * scaled_dirty.h);
+@@ -931,9 +988,25 @@ static void ApplyPendingInternalRes(void) {
+ 
+ static bool DownloadVramRegionAsRGBA8888(int x, int y, int w, int h, u8* out);
+ 
++// A CPU copy of the native VRAM (Draw_LoadImage, Draw_ClearImage,
++// Draw_MoveImage keep it), and a count of writes to it.
++static u16 vram_shadow[VRAM_H][VRAM_W];
++static unsigned vram_shadow_gen;
++
+ // Decode the 24-bit display area (w pixels = w*3/2 VRAM halfwords per row)
+ // into disp24_rgb (RGB888) and upload it to disp24_tex as RGBA8888.
+ static bool Build24BitDisplay(int w, int h) {
++    // Movies. The GPU never draws in 24 bits, so the picture is what was
++    // uploaded (MDEC frames) and the CPU copy of the VRAM has it: no read-back
++    // from the GPU (which waited for it 2-3 times per movie frame at HD and
++    // made the movies stutter), and nothing to do while the frame is the same.
++    static unsigned last_gen = ~0u;
++    static int last_x = -1, last_y = -1, last_w = -1, last_h = -1;
++    if (disp24_tex && disp24_rgb && last_gen == vram_shadow_gen && last_x == display_area.x &&
++        last_y == display_area.y && last_w == w && last_h == h) {
++        return true;
++    }
++    PROF_BEGIN;
+     int hw = (w * 3 + 1) / 2;
+     if (display_area.x + hw > VRAM_W) {
+         hw = VRAM_W - display_area.x;
+@@ -950,12 +1023,10 @@ static bool Build24BitDisplay(int w, int h) {
+         return false;
+     }
+     disp24_rgb = rgb;
+-    if (!DownloadVramRegionAsRGBA8888(display_area.x, display_area.y, hw, h, rgba)) {
+-        free(rgba);
+-        free(half);
+-        return false;
++    for (int y = 0; y < h; y++) {
++        memcpy(half + (size_t)y * hw, &vram_shadow[display_area.y + y][display_area.x],
++               (size_t)hw * 2);
+     }
+-    ConvertRgba8888ToRgb5551(rgba, half, (size_t)hw * h);
+     for (int y = 0; y < h; y++) {
+         const u8* row = (const u8*)(half + (size_t)y * hw);
+         size_t row_bytes = (size_t)hw * 2;
+@@ -1013,10 +1084,22 @@ static bool Build24BitDisplay(int w, int h) {
+         .texture = disp24_tex, .w = (Uint32)w, .h = (Uint32)h, .d = 1};
+     SDL_UploadToGPUTexture(copy, &src, &dst, false);
+     SDL_EndGPUCopyPass(copy);
++    last_gen = vram_shadow_gen;
++    last_x = display_area.x;
++    last_y = display_area.y;
++    last_w = w;
++    last_h = h;
++    PROF_END(2);
+     return true;
+ }
+ 
++static void PlatformBackend_Present_(void);
+ static void PlatformBackend_Present(void) {
++    PROF_BEGIN;
++    PlatformBackend_Present_();
++    PROF_END(3);
++}
++static void PlatformBackend_Present_(void) {
+     if (!sdl3_window && !InitPlatform()) {
+         return;
+     }
+@@ -2219,6 +2302,9 @@ void Draw_DisplayVerticalRange(unsigned int start, int unsigned end) {
+ void Draw_SetDisplayMode(DisplayMode* mode) {
+     // TODO the interlace flag is ignored
+     disp_rgb24 = mode->rgb24 != 0;
++    if (!disp_rgb24) {
++        HdCatchUp(); // the 15-bit display shows the HD VRAM
++    }
+     if (mode->reversed) {
+         WARNF("reverse mode not supported");
+     }
+@@ -2894,6 +2980,8 @@ void Psyz_VideoResetWidescreenShift(void) {
+ 
+ void Psyz_VideoSetSoftBorders(int on) { soft_borders = on != 0; }
+ 
++int Psyz_VideoGetRgb24(void) { return disp_rgb24 ? 1 : 0; }
++
+ int Psyz_VideoRecordStart(const char* path, int w, int h) {
+     if (rec.f || w <= 0 || h <= 0) {
+         return 0;
+@@ -2952,11 +3040,10 @@ int Psyz_VideoHiresIndices4Active(int slot) {
+ // A CPU copy of the native VRAM, kept from every upload, fill and copy (not
+ // from drawing), so the host can see which texels of a texture are empty
+ // (Psyz_VramShadow). Only the 1x VRAM; HD sampling is unaffected.
+-static u16 vram_shadow[VRAM_H][VRAM_W];
+-
+ const unsigned short* Psyz_VramShadow(void) { return &vram_shadow[0][0]; }
+ 
+ static void ShadowFill(int x, int y, int w, int h, u16 c) {
++    vram_shadow_gen++;
+     for (int j = y < 0 ? 0 : y; j < y + h && j < VRAM_H; j++) {
+         for (int i = x < 0 ? 0 : x; i < x + w && i < VRAM_W; i++) {
+             vram_shadow[j][i] = c;
+@@ -2964,7 +3051,13 @@ static void ShadowFill(int x, int y, int w, int h, u16 c) {
+     }
+ }
+ 
++static void Draw_ClearImage_(PS1_RECT* rect, u_char r, u_char g, u_char b);
+ void Draw_ClearImage(PS1_RECT* rect, u_char r, u_char g, u_char b) {
++    PROF_BEGIN;
++    Draw_ClearImage_(rect, r, g, b);
++    PROF_END(5);
++}
++static void Draw_ClearImage_(PS1_RECT* rect, u_char r, u_char g, u_char b) {
+     if (rect->w == 0 || rect->h == 0) {
+         return;
+     }
+@@ -3025,7 +3118,13 @@ void Draw_ClearImage(PS1_RECT* rect, u_char r, u_char g, u_char b) {
+     SyncNativeVramToScaled(rect->x, rect->y, rect->w, rect->h);
+ }
+ 
++static void Draw_LoadImage_(PS1_RECT* rect, u_long* p);
+ void Draw_LoadImage(PS1_RECT* rect, u_long* p) {
++    PROF_BEGIN;
++    Draw_LoadImage_(rect, p);
++    PROF_END(0);
++}
++static void Draw_LoadImage_(PS1_RECT* rect, u_long* p) {
+     if (rect->w == 0 || rect->h == 0) {
+         return;
+     }
+@@ -3039,6 +3138,7 @@ void Draw_LoadImage(PS1_RECT* rect, u_long* p) {
+         memcpy(&vram_shadow[rect->y + j][rect->x], (const u16*)p + (size_t)j * rect->w,
+                sizeof(u16) * rect->w);
+     }
++    vram_shadow_gen++;
+     if (!sdl3_window && !InitPlatform()) {
+         return;
+     }
+@@ -3102,7 +3202,13 @@ void Draw_StoreImage(PS1_RECT* rect, u_long* p) {
+     free(rgba);
+ }
+ 
++static void Draw_MoveImage_(PS1_RECT* rect, unsigned int x, unsigned int y);
+ void Draw_MoveImage(PS1_RECT* rect, unsigned int x, unsigned int y) {
++    PROF_BEGIN;
++    Draw_MoveImage_(rect, x, y);
++    PROF_END(4);
++}
++static void Draw_MoveImage_(PS1_RECT* rect, unsigned int x, unsigned int y) {
+     if (rect->x == x && rect->y == y) {
+         return;
+     }
+@@ -3133,6 +3239,7 @@ void Draw_MoveImage(PS1_RECT* rect, unsigned int x, unsigned int y) {
+     {
+         // the same copy in the CPU VRAM (rows in the order that survives overlap)
+         const bool up = dst_y > src_y;
++        vram_shadow_gen++;
+         for (int k = 0; k < copy_h; k++) {
+             const int j = up ? copy_h - 1 - k : k;
+             memmove(&vram_shadow[dst_y + j][dst_x], &vram_shadow[src_y + j][src_x],
+@@ -3188,10 +3295,17 @@ void Draw_ResetBuffer(void) {
+     batch_sample_all = false;
+ }
+ 
++static void Draw_FlushBuffer_(void);
+ void Draw_FlushBuffer(void) {
+     if (n_vertices == 0) {
+         return;
+     }
++    PROF_BEGIN;
++    Draw_FlushBuffer_();
++    PROF_END(7);
++}
++static void Draw_FlushBuffer_(void) {
++    HdCatchUp(); // drawing samples and draws the HD VRAM
+     dbg_flushes++;
+     SDL_GPUCommandBuffer* cmd = AcquireCmd();
+     if (!cmd) {

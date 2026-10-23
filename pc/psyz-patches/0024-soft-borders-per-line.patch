@@ -1,0 +1,336 @@
+diff --git a/psyz/include/psyz/video.h b/psyz/include/psyz/video.h
+index 625e984..40c950c 100644
+--- a/psyz/include/psyz/video.h
++++ b/psyz/include/psyz/video.h
+@@ -369,6 +369,19 @@ void Psyz_VideoSetSoftBorders(int on);
+  * Psyz_VideoSetWidescreenShift for the same buffer.
+  */
+ void Psyz_VideoSetWidescreenPicture(float left, float right);
++
++/**
++ * @brief The same for each line of the drawing area (0 = its top), game
++ * pixels; a line with left > right has no picture of its own and uses the
++ * ends given to Psyz_VideoSetWidescreenPicture. At most 256 lines.
++ */
++void Psyz_VideoSetWidescreenPictureRows(const short* left, const short* right, int rows);
++
++/**
++ * @brief The native VRAM as last uploaded, filled or copied (1024 x 512
++ * 16-bit pixels, row by row); drawing into VRAM is not included.
++ */
++const unsigned short* Psyz_VramShadow(void);
+ int Psyz_VideoGetWidescreen(void);
+ 
+ /**
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index cab5ef1..c0c4d22 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -148,12 +148,17 @@ static Posi draw_offset = {0, 0};
+ // reaches the screen; it can slide sideways (ws_shift, per display buffer)
+ // so a room's end needs no black bar.
+ #define WS_SQUEEZE 0.75f
++#define WS_ROWS 256
+ static bool widescreen = false;
+ static struct {
+     int y;       // the display buffer's VRAM y
+     float shift; // window centre minus the buffer centre, game pixels
+     float pic_l, pic_r; // where the picture is, game pixels (soft borders)
+-} ws_shift[2] = {{-1, 0.0f, -1e9f, 1e9f}, {-1, 0.0f, -1e9f, 1e9f}};
++    // the same for each line (Psyz_VideoSetWidescreenPictureRows); a line
++    // with row_l > row_r uses pic_l / pic_r. rows = 0: none given.
++    int rows;
++    short row_l[WS_ROWS], row_r[WS_ROWS];
++} ws_shift[2] = {{-1, 0.0f, -1e9f, 1e9f, 0}, {-1, 0.0f, -1e9f, 1e9f, 0}};
+ 
+ // Soft borders (Psyz_VideoSetSoftBorders): bars beside the picture show its
+ // own edge, mirrored, blurred and darkened, instead of black.
+@@ -1036,6 +1041,7 @@ static void PlatformBackend_Present(void) {
+                 SDL_Rect dst = FitGameToWindow(game_aspect, win);
+                 // soft borders: the window and the picture, buffer pixels
+                 float ws_x0 = 0.0f, ws_vw = 0.0f, ws_pl = -1e9f, ws_pr = 1e9f;
++                int ws_slot = -1;
+                 if (ws_view) {
+                     // a 16:9 window of the squeezed buffer, as tall as the
+                     // shown lines, centred on the buffer plus its shift
+@@ -1047,6 +1053,7 @@ static void PlatformBackend_Present(void) {
+                             shift = ws_shift[i].shift;
+                             ws_pl = ws_shift[i].pic_l;
+                             ws_pr = ws_shift[i].pic_r;
++                            ws_slot = i;
+                         }
+                     }
+                     float half = WsHalfView(game_aspect);
+@@ -1108,34 +1115,146 @@ static void PlatformBackend_Present(void) {
+                 };
+                 SDL_BlitGPUTexture(cmd, &blit);
+                 if (soft_borders && !debug_show_vram) {
+-                    BorderBar bars[2];
++                    // two bars per run of lines with the same picture ends
++                    static BorderBar bars[2 * WS_ROWS + 2];
+                     int nb = 0;
+                     const float tw = show24 ? 640.0f : (float)(VRAM_W * n);
+                     const float th = show24 ? 512.0f : (float)(VRAM_H * n);
+                     const float sy0 = (float)dst.y, sy1 = (float)(dst.y + dst.h);
+                     const float v0 = (float)src.y, v1 = (float)(src.y + src.h);
++                    // the area the bars sample from (shrunk below)
++                    float rx = 0.0f, rw = 0.0f;
+                     if (ws_view && ws_vw > 0.0f) {
+                         // bars inside the 16:9 window, where the stored
+-                        // picture ends (rooms kept only as 4:3)
++                        // picture ends (rooms kept only as 4:3, and lines
++                        // where a layer stops short of the others: in the
++                        // precinct basement the floor runs 11 pixels below
++                        // the walls and is narrower, which left a thin hard
++                        // black corner between the picture and the bar)
+                         const float half_w = (float)display_size.x * 0.5f;
+-                        float bl = half_w + (ws_pl - half_w) * WS_SQUEEZE;
+-                        float br = half_w + (ws_pr - half_w) * WS_SQUEEZE;
+                         const float scale = (float)dst.w / ws_vw; // screen px per buffer px
+                         const float base = (float)display_area.x * n;
+-                        if (bl > ws_x0 + 0.5f && br - bl > 8.0f) {
+-                            float w = bl - ws_x0;
+-                            bars[nb++] = (BorderBar){
+-                                (float)dst.x, sy0, (float)dst.x + w * scale, sy1,
+-                                base + (bl + w) * n, base + bl * n, v0, v1,
+-                                base + bl * n, v0, base + br * n, v1, 0.25f, 0.5f};
++                        const int lines = (int)(src.h / n);
++                        const int rows = ws_slot >= 0 ? ws_shift[ws_slot].rows : 0;
++                        const int nl = lines < WS_ROWS ? lines : WS_ROWS;
++                        float lo = 1e9f, hi = -1e9f;
++                        // the picture's ends on every line (game pixels)
++                        static float el[WS_ROWS], er[WS_ROWS];
++                        for (int r = 0; r < nl; r++) {
++                            el[r] = ws_pl;
++                            er[r] = ws_pr;
++                            if (r < rows && ws_shift[ws_slot].row_l[r] <= ws_shift[ws_slot].row_r[r]) {
++                                el[r] = ws_shift[ws_slot].row_l[r];
++                                er[r] = ws_shift[ws_slot].row_r[r];
++                            }
++                        }
++                        // A notch one or two lines tall where the stored
++                        // picture stops short of the lines around it (the
++                        // basement: one line ends at 309 between lines that
++                        // reach 320; the right wall's top line) showed as a
++                        // thin dark line into the picture. Such lines get
++                        // the nearest full line copied across the gap, and
++                        // their bar starts where their neighbours' does.
++                        for (int side = 0; side < 2; side++) {
++                            float* e = side ? er : el;
++                            for (int a = 0; a < nl;) {
++                                // one or two lines, each short of the
++                                // lines on both sides (only below, at the top)
++                                int b = a;
++                                for (int len = 2; len >= 1 && b == a; len--) {
++                                    bool ok = a + len < nl;
++                                    for (int r = a; ok && r < a + len; r++) {
++                                        ok = el[r] <= er[r] &&
++                                             (a == 0 || (side ? e[a - 1] > e[r] : e[a - 1] < e[r])) &&
++                                             (side ? e[a + len] > e[r] : e[a + len] < e[r]);
++                                    }
++                                    if (ok) {
++                                        b = a + len;
++                                    }
++                                }
++                                if (b == a) {
++                                    a++;
++                                    continue;
++                                }
++                                // fill lines a..b-1 up to the nearer of the
++                                // neighbours' ends, from the nearest one
++                                float t = e[b];
++                                if (a > 0) {
++                                    t = side ? (e[a - 1] < t ? e[a - 1] : t) : (e[a - 1] > t ? e[a - 1] : t);
++                                }
++                                for (int r = a; r < b; r++) {
++                                    const int from = (a > 0 && r - (a - 1) <= b - r) ? a - 1 : b;
++                                    const float g0 = side ? e[r] : t, g1 = side ? t : e[r];
++                                    const float x0b = half_w + (g0 - half_w) * WS_SQUEEZE;
++                                    const float x1b = half_w + (g1 - half_w) * WS_SQUEEZE;
++                                    const float sxa = (float)dst.x + (x0b - ws_x0) * scale;
++                                    const float sxb = (float)dst.x + (x1b - ws_x0) * scale;
++                                    const float sya = sy0 + (sy1 - sy0) * (float)r / (float)lines;
++                                    const float syb = sy0 + (sy1 - sy0) * (float)(r + 1) / (float)lines;
++                                    const Uint32 ux = (Uint32)(base + x0b * n + 0.5f);
++                                    const Uint32 uw = (Uint32)(base + x1b * n + 0.5f) - ux;
++                                    const Uint32 dx = (Uint32)(sxa + 0.5f), dy = (Uint32)(sya + 0.5f);
++                                    const Uint32 dw = (Uint32)(sxb + 0.5f) - dx;
++                                    const Uint32 dh = (Uint32)(syb + 0.5f) - dy;
++                                    if (uw > 0 && dw > 0 && dh > 0) {
++                                        const SDL_GPUBlitInfo fill = {
++                                            .source = {.texture = src.texture, .x = ux,
++                                                       .y = (Uint32)v0 + (Uint32)from * n,
++                                                       .w = uw, .h = n},
++                                            .destination = {.texture = swapchain, .x = dx,
++                                                            .y = dy, .w = dw, .h = dh},
++                                            .load_op = SDL_GPU_LOADOP_LOAD,
++                                            .filter = SDL_GPU_FILTER_NEAREST,
++                                        };
++                                        SDL_BlitGPUTexture(cmd, &fill);
++                                    }
++                                    e[r] = t;
++                                }
++                                a = b;
++                            }
++                        }
++                        int r0 = 0;
++                        while (r0 < lines) {
++                            // the picture's ends on line r0, then how many
++                            // lines below share them
++                            const float pl = r0 < nl ? el[r0] : ws_pl;
++                            const float pr = r0 < nl ? er[r0] : ws_pr;
++                            int r1 = r0 + 1;
++                            while (r1 < lines && (r1 < nl ? el[r1] : ws_pl) == pl &&
++                                   (r1 < nl ? er[r1] : ws_pr) == pr) {
++                                r1++;
++                            }
++                            float bl = half_w + (pl - half_w) * WS_SQUEEZE;
++                            float br = half_w + (pr - half_w) * WS_SQUEEZE;
++                            const float ya = sy0 + (sy1 - sy0) * (float)r0 / (float)lines;
++                            const float yb = sy0 + (sy1 - sy0) * (float)r1 / (float)lines;
++                            const float va = v0 + (float)(r0 * (int)n);
++                            const float vb = v0 + (float)(r1 * (int)n);
++                            const int nb_before = nb;
++                            if (bl > ws_x0 + 0.5f && br - bl > 8.0f) {
++                                float w = bl - ws_x0;
++                                bars[nb++] = (BorderBar){
++                                    (float)dst.x, ya, (float)dst.x + w * scale, yb,
++                                    base + (bl + w) * n, base + bl * n, va, vb,
++                                    base + bl * n, v0, base + br * n, v1, 0.25f, 0.5f};
++                            }
++                            if (br < ws_x0 + ws_vw - 0.5f && br - bl > 8.0f) {
++                                float w = ws_x0 + ws_vw - br;
++                                bars[nb++] = (BorderBar){
++                                    (float)dst.x + (br - ws_x0) * scale, ya,
++                                    (float)(dst.x + dst.w), yb, base + br * n,
++                                    base + (br - w) * n, va, vb, base + bl * n, v0,
++                                    base + br * n, v1, 0.5f, 0.25f};
++                            }
++                            if (nb > nb_before) {
++                                lo = base + bl * n < lo ? base + bl * n : lo;
++                                hi = base + br * n > hi ? base + br * n : hi;
++                            }
++                            r0 = r1;
+                         }
+-                        if (br < ws_x0 + ws_vw - 0.5f && br - bl > 8.0f) {
+-                            float w = ws_x0 + ws_vw - br;
+-                            bars[nb++] = (BorderBar){
+-                                (float)dst.x + (br - ws_x0) * scale, sy0,
+-                                (float)(dst.x + dst.w), sy1, base + br * n,
+-                                base + (br - w) * n, v0, v1, base + bl * n, v0,
+-                                base + br * n, v1, 0.5f, 0.25f};
++                        if (nb > 0) {
++                            rx = lo;
++                            rw = hi - lo;
+                         }
+                     } else if (dst.x >= 2) {
+                         // bars beside a 4:3 picture (movies, Original)
+@@ -1147,13 +1266,13 @@ static void PlatformBackend_Present(void) {
+                         bars[nb++] = (BorderBar){
+                             (float)(dst.x + dst.w), sy0, (float)sc_w, sy1, u1,
+                             u1 - w, v0, v1, u0, v0, u1, v1, 0.5f, 0.25f};
++                        rx = u0;
++                        rw = u1 - u0;
+                     }
+                     if (nb > 0) {
+                         // the bars sample the picture shrunk to a small,
+                         // smooth copy; map their coordinates into it
+-                        const float rx = bars[0].au0, ry = bars[0].av0;
+-                        const float rw = bars[0].au1 - bars[0].au0;
+-                        const float rh = bars[0].av1 - bars[0].av0;
++                        const float ry = v0, rh = v1 - v0;
+                         float cw = rw, ch = rh, aw = tw, ah = th;
+                         SDL_GPUTexture* small = ShrinkForBorders(
+                             cmd, src.texture, rx, ry, rw, rh, &cw, &ch, &aw, &ah);
+@@ -1165,9 +1284,11 @@ static void PlatformBackend_Present(void) {
+                                 b->u_at_x1 = (b->u_at_x1 - rx) * sx;
+                                 b->v0 = (b->v0 - ry) * sy;
+                                 b->v1 = (b->v1 - ry) * sy;
+-                                b->au0 = 0.5f;
++                                // each bar's own picture, inside the copy
++                                float a0 = (b->au0 - rx) * sx, a1 = (b->au1 - rx) * sx;
++                                b->au0 = a0 > 0.5f ? a0 : 0.5f;
++                                b->au1 = a1 < cw - 0.5f ? a1 : cw - 0.5f;
+                                 b->av0 = 0.5f;
+-                                b->au1 = cw - 0.5f;
+                                 b->av1 = ch - 0.5f;
+                             }
+                         }
+@@ -2447,10 +2568,22 @@ void Psyz_VideoSetWidescreenPicture(float left, float right) {
+     }
+ }
+ 
++void Psyz_VideoSetWidescreenPictureRows(const short* left, const short* right, int rows) {
++    rows = rows < 0 ? 0 : (rows > WS_ROWS ? WS_ROWS : rows);
++    for (int i = 0; i < 2; i++) {
++        if (ws_shift[i].y == draw_area_start.y) {
++            ws_shift[i].rows = rows;
++            memcpy(ws_shift[i].row_l, left, sizeof(short) * rows);
++            memcpy(ws_shift[i].row_r, right, sizeof(short) * rows);
++        }
++    }
++}
++
+ void Psyz_VideoResetWidescreenShift(void) {
+     ws_shift[0].shift = ws_shift[1].shift = 0.0f;
+     ws_shift[0].pic_l = ws_shift[1].pic_l = -1e9f;
+     ws_shift[0].pic_r = ws_shift[1].pic_r = 1e9f;
++    ws_shift[0].rows = ws_shift[1].rows = 0;
+ }
+ 
+ void Psyz_VideoSetSoftBorders(int on) { soft_borders = on != 0; }
+@@ -2468,10 +2601,27 @@ int Psyz_VideoHiresIndices4Active(int slot) {
+     return slot >= 0 && slot < PSYZ_HIRES_SLOTS && hires[slot].on ? 1 : 0;
+ }
+ 
++// A CPU copy of the native VRAM, kept from every upload, fill and copy (not
++// from drawing), so the host can see which texels of a texture are empty
++// (Psyz_VramShadow). Only the 1x VRAM; HD sampling is unaffected.
++static u16 vram_shadow[VRAM_H][VRAM_W];
++
++const unsigned short* Psyz_VramShadow(void) { return &vram_shadow[0][0]; }
++
++static void ShadowFill(int x, int y, int w, int h, u16 c) {
++    for (int j = y < 0 ? 0 : y; j < y + h && j < VRAM_H; j++) {
++        for (int i = x < 0 ? 0 : x; i < x + w && i < VRAM_W; i++) {
++            vram_shadow[j][i] = c;
++        }
++    }
++}
++
+ void Draw_ClearImage(PS1_RECT* rect, u_char r, u_char g, u_char b) {
+     if (rect->w == 0 || rect->h == 0) {
+         return;
+     }
++    ShadowFill(rect->x, rect->y, rect->w, rect->h,
++               (u16)((r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10)));
+     HiresTouch(rect->x, rect->y, rect->w, rect->h);
+     if (!sdl3_window && !InitPlatform()) {
+         return;
+@@ -2537,6 +2687,10 @@ void Draw_LoadImage(PS1_RECT* rect, u_long* p) {
+               rect->x, rect->y, rect->w, rect->h, VRAM_W, VRAM_H);
+         return;
+     }
++    for (int j = 0; j < rect->h; j++) {
++        memcpy(&vram_shadow[rect->y + j][rect->x], (const u16*)p + (size_t)j * rect->w,
++               sizeof(u16) * rect->w);
++    }
+     if (!sdl3_window && !InitPlatform()) {
+         return;
+     }
+@@ -2628,6 +2782,15 @@ void Draw_MoveImage(PS1_RECT* rect, unsigned int x, unsigned int y) {
+         WARNF("nothing to copy");
+         return;
+     }
++    {
++        // the same copy in the CPU VRAM (rows in the order that survives overlap)
++        const bool up = dst_y > src_y;
++        for (int k = 0; k < copy_h; k++) {
++            const int j = up ? copy_h - 1 - k : k;
++            memmove(&vram_shadow[dst_y + j][dst_x], &vram_shadow[src_y + j][src_x],
++                    sizeof(u16) * copy_w);
++        }
++    }
+     HiresTouch(dst_x, dst_y, copy_w, copy_h);
+     SyncScaledVramToNative(); // MoveImage copies the native VRAM
+ 
