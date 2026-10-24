@@ -36,3 +36,8 @@ scripts/build.sh "/path/to/Parasite Eve (USA) (Disc 1).cue"
 
 Output: `work/dist/parasite-eve.exe`. Start it with your Disc 1 `.cue` as the
 argument, or set `disc=` in `settings.ini`. Logs are in `work/build/logs/`.
+
+## Credits
+
+Decomp by [khasinski](https://github.com/khasinski/parasite-eve-pc), PsyZ by
+[Xeeynamo](https://github.com/Xeeynamo/psyz).
