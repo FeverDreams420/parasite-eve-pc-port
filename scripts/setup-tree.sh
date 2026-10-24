@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the working source tree for the native port:
 #   khasinski/parasite-eve-pc at the version this port is built on, with this
-#   repository's files (pc/, tools/pc/, ROADMAP.md) added on a branch "native",
+#   repository's files (pc/, tools/pc/) added on a branch "native",
 #   and the PsyZ patches applied.
 #
 # Usage: scripts/setup-tree.sh [destination folder]   (default: ./work)
@@ -31,7 +31,6 @@ git -C third_party/psyz submodule update --init external/SDL
 mkdir -p pc tools/pc
 cp -R "$HERE/pc/." pc/
 cp -R "$HERE/tools/pc/." tools/pc/
-cp "$HERE/ROADMAP.md" .
 
 # PsyZ patches, in order (pc/psyz-patches/0001-..., 0002-..., ...).
 for p in "$DEST"/pc/psyz-patches/[0-9][0-9][0-9][0-9]-*.patch; do
