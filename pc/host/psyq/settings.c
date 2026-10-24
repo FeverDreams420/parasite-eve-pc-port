@@ -109,7 +109,7 @@ static void apply_resolution_as(unsigned res) {
 }
 
 /* Movies (24-bit display) at HD: the game's own time went up by about
- * 15 ms a frame and they stuttered (owner's timing logs; uploads, decoding,
+ * 15 ms a frame and they stuttered (timing logs; uploads, decoding,
  * VRAM copies and drawing cost the same as at 1x, the rest was not found).
  * A movie is a 320x240 picture shown as it is, so HD adds nothing to it:
  * while one plays the resolution is Original, and HD comes back after it.
@@ -119,7 +119,7 @@ unsigned pe_mdec_decodes(void); /* mdec.c */
 void pe_host_movie_check(void) {
     static int off_frames;
     /* A movie decodes a new picture every frame; the Square logo at boot is
-     * a still 24-bit picture, and switching during it broke it (owner). So
+     * a still 24-bit picture, and switching during it broke it. So
      * Original only once the 24-bit display has decoded movie pictures in 8
      * of the last 10 frames. */
     static unsigned last_decodes, history;

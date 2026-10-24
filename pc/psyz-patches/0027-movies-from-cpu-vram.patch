@@ -17,7 +17,7 @@ index 595a0c6..c1f7d1a 100644
  
  /**
 diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
-index c68d00b..41a9df1 100644
+index c68d00b..1968269 100644
 --- a/psyz/src/platform/sdl3_gpu.c
 +++ b/psyz/src/platform/sdl3_gpu.c
 @@ -755,10 +755,59 @@ static void MarkVramDirty(SDL_Rect r) {
@@ -43,7 +43,7 @@ index c68d00b..41a9df1 100644
 +// While a movie shows (24-bit display, drawn from disp24_tex, never from the
 +// HD VRAM), uploads are not copied up to the HD VRAM one by one: at 8x each
 +// copy is a pass over the 8192x4096 target, 20 a movie frame, and the
-+// graphics card fell behind (movies lagged at HD only, owner's timing log:
++// graphics card fell behind (movies lagged at HD only, timing log:
 +// uploads 11 ms a frame). Their area is gathered and copied once, before the
 +// HD VRAM is used again (drawing, a read of it, or the 15-bit display).
 +static SDL_Rect hd_pending = {0, 0, 0, 0};
