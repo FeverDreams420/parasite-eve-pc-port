@@ -58,7 +58,8 @@ long pe_psyq_StopRCnt(long spec) { return StopRCnt(spec); }
  *   PE_CAPTURE_DIR=dir PE_CAPTURE_EVERY=n  write frame_NNNNN.ppm every n frames
  *   PE_CAPTURE_FROM=n                      ...only from frame n on
  *   PE_CAPTURE_VRAM=1                      write the whole VRAM as well
- *   PE_EXIT_AFTER=n                        quit after n frames */
+ *   PE_EXIT_AFTER=n                        quit after n frames
+ *   PE_VRAM_CHECK=1, PE_VRAM_CHECK_EVERY=n VRAM check (vram_check.c) */
 #include <stdio.h>
 #include <stdlib.h>
 unsigned char *Psyz_VideoAllocCapturedFrame(int *w, int *h);
@@ -93,38 +94,50 @@ static int g_frame_refreshes; /* refreshes the last game frame took */
 float pe_host_ws_last_shift(void);
 void pe_host_record_start(unsigned frame);
 void pe_host_record_frame(unsigned frame, int refreshes, int mode, double game_s, double wait_s, int ff);
+void pe_host_vram_check_snapshot(unsigned frame);
+void pe_host_vram_check_frame(unsigned frame);
+void pe_host_f12_start(unsigned frame);
+const char *pe_host_f12_path(char *buf, size_t size, const char *fmt, ...);
+void pe_host_f12_data(unsigned frame, int refreshes);
+void pe_host_f12_ref_begin(unsigned snap_frame);
+void pe_host_f12_ref_step(unsigned frame);
+/* F12 (f12.c lists every file): all of it goes into the folder f12-NNNNN. */
 void pe_host_snapshot_request(void) {
-    if (g_snap_state == 0) {
-        g_snap_state = 1;
+    char path[128];
+    if (g_snap_state != 0) {
+        return; /* the last one is still being taken */
     }
-    {
-        /* the screen as shown (window, soft borders), full size */
-        char path[64];
-        snprintf(path, sizeof(path), "snapshot-%05u-screen.ppm", g_frames + 1);
-        Psyz_VideoPresentTestNext(path);
-    }
+    g_snap_state = 1;
+    pe_host_f12_start(g_frames);
+    /* the screen as shown (window, soft borders), full size */
+    Psyz_VideoPresentTestNext(
+        pe_host_f12_path(path, sizeof(path), "snapshot-%05u-screen.ppm", g_frames + 1));
     pe_host_record_start(g_frames); /* and the next seconds (recorder.c) */
+    fprintf(stderr, "pe: F12: saving into f12-%05u\n", g_frames);
 }
 static void snapshot_step(void) {
     if (g_snap_state == 2 && pe_host_snapshot_gpu_packets() != 0) {
-        char path[64];
+        char path[128];
         int w, h;
         unsigned char *rgb;
         pe_host_snapshot_gpu_end();
+        /* first: the reads below copy the HD picture down into the 1x VRAM */
+        pe_host_vram_check_snapshot(g_frames);
         if ((rgb = Psyz_VideoAllocCapturedFrame(&w, &h)) != NULL) {
-            snprintf(path, sizeof(path), "snapshot-%05u-frame.ppm", g_frames);
+            pe_host_f12_path(path, sizeof(path), "snapshot-%05u-frame.ppm", g_frames);
             write_ppm(path, rgb, w, h);
             free(rgb);
         }
         if ((rgb = Psyz_VideoAllocVramDump(&w, &h)) != NULL) {
-            snprintf(path, sizeof(path), "snapshot-%05u-vram.ppm", g_frames);
+            pe_host_f12_path(path, sizeof(path), "snapshot-%05u-vram.ppm", g_frames);
             write_ppm(path, rgb, w, h);
             free(rgb);
         }
-        if (getenv("PE_SNAPSHOT_RAM")) {
-            /* Debug: also the 2 MiB of PS1 RAM, for finding game tables. */
+        pe_host_f12_data(g_frames, g_frame_refreshes);
+        if (!getenv("PE_SNAPSHOT_RAM") || atoi(getenv("PE_SNAPSHOT_RAM")) != 0) {
+            /* the 2 MiB of PS1 RAM (PE_SNAPSHOT_RAM=0: not) */
             FILE *rf;
-            snprintf(path, sizeof(path), "snapshot-%05u-ram.bin", g_frames);
+            pe_host_f12_path(path, sizeof(path), "snapshot-%05u-ram.bin", g_frames);
             if ((rf = fopen(path, "wb")) != NULL) {
                 fwrite((const void *)(uintptr_t)0x80000000u, 1, 0x200000, rf);
                 fclose(rf);
@@ -135,7 +148,7 @@ static void snapshot_step(void) {
                 RECT all = {0, 0, 1024, 512};
                 StoreImage(&all, (u_long *)vram);
                 DrawSync(0);
-                snprintf(path, sizeof(path), "snapshot-%05u-vram.bin", g_frames);
+                pe_host_f12_path(path, sizeof(path), "snapshot-%05u-vram.bin", g_frames);
                 if ((rf = fopen(path, "wb")) != NULL) {
                     fwrite(vram, 1, sizeof(vram), rf);
                     fclose(rf);
@@ -149,23 +162,25 @@ static void snapshot_step(void) {
             fclose(g_pgxp_dump);
             g_pgxp_dump = NULL;
         }
-        /* PE_CAPTURE_BURST=n (capture-burst.bat): then the next n frames in
-         * a row, at the chosen resolution, for motion that shows only while
-         * playing (vibration). */
-        if (getenv("PE_CAPTURE_BURST")) {
-            g_burst = atoi(getenv("PE_CAPTURE_BURST"));
-            g_burst = g_burst > 60 ? 60 : g_burst;
+        /* then the next PE_CAPTURE_BURST frames in a row (default 4, 0 =
+         * none, up to 60), at the chosen resolution, for motion that shows
+         * only while playing (vibration) */
+        g_burst = getenv("PE_CAPTURE_BURST") ? atoi(getenv("PE_CAPTURE_BURST")) : 4;
+        g_burst = g_burst > 60 ? 60 : (g_burst < 0 ? 0 : g_burst);
+        if (g_burst > 0) {
             /* and every polygon's corners in those frames */
-            g_pgxp_dump = fopen("burst-pgxp.txt", "w");
+            g_pgxp_dump = fopen(pe_host_f12_path(path, sizeof(path), "burst-pgxp.txt"), "w");
             Psyz_PgxpDebugFile(g_pgxp_dump);
         }
     }
     if (g_snap_state == 1) {
-        char path[64];
+        char path[128];
         pe_host_snapshot_gpu_begin(g_frames + 1);
         g_snap_state = 2;
+        /* the same frame drawn at 1x as the PS1 draws it (f12.c) */
+        pe_host_f12_ref_begin(g_frames + 1);
         /* every polygon's corners in the snapshot frame */
-        snprintf(path, sizeof(path), "snapshot-%05u-pgxp.txt", g_frames + 1);
+        pe_host_f12_path(path, sizeof(path), "snapshot-%05u-pgxp.txt", g_frames + 1);
         g_pgxp_dump = fopen(path, "w");
         Psyz_PgxpDebugFile(g_pgxp_dump);
     }
@@ -184,6 +199,8 @@ static void debug_frame(void) {
     }
     g_frames++;
     snapshot_step();
+    pe_host_f12_ref_step(g_frames);
+    pe_host_vram_check_frame(g_frames);
     {
         /* debug PE_PRESENT_AT=n,m,...: the screen as presented (window, soft
          * borders) after game frame n is saved as present-<n>.ppm */
@@ -265,9 +282,9 @@ static void debug_frame(void) {
                 fprintf(stderr, "%s\n", line);
             }
             for (i = 0; i < kn; i++) {
-                if (getenv("PE_BURST_IMAGES")) {
-                    char path[64];
-                    snprintf(path, sizeof(path), "burst-%05u.ppm", kframe[i]);
+                if (!getenv("PE_BURST_IMAGES") || atoi(getenv("PE_BURST_IMAGES")) != 0) {
+                    char path[128];
+                    pe_host_f12_path(path, sizeof(path), "burst-%05u.ppm", kframe[i]);
                     write_ppm(path, keep[i], kw, kh);
                 }
                 free(keep[i]);
@@ -417,7 +434,7 @@ int pe_psyq_VSync(int mode) {
         steps++;
         if (!pe_host_fast_forward() && !clock_paced) {
             /* Floor: a refresh step never ends sooner than a screen refresh
-             * after the last one. In exclusive fullscreen on one PC
+             * after the last one. In exclusive fullscreen on the test PC
              * (D3D12) VSync(0) returned early often enough to run the game
              * 20-40% fast (frames waited 23-28 ms instead of 33), but not so
              * often that the switch below noticed. A schedule advancing

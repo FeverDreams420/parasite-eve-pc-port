@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+const char *pe_host_f12_path(char *buf, size_t size, const char *fmt, ...);
 
 void Psyz_GpuWriteGP0(unsigned int word);
 int Psyz_GpuExeque(void);
@@ -66,11 +67,11 @@ static unsigned int g_snap_frame, g_snap_packets;
  * (VSync can be called more than once per game frame). */
 unsigned int pe_host_snapshot_gpu_packets(void) { return g_snap_packets; }
 void pe_host_snapshot_gpu_begin(unsigned int frame) {
-    char path[64];
+    char path[128];
     if (g_snap_file) {
         fclose(g_snap_file);
     }
-    snprintf(path, sizeof(path), "snapshot-%05u-gpu.txt", frame);
+    pe_host_f12_path(path, sizeof(path), "snapshot-%05u-gpu.txt", frame);
     g_snap_file = fopen(path, "w");
     g_snap_frame = frame;
     g_snap_packets = 0;

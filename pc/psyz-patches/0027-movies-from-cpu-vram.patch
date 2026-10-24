@@ -43,8 +43,8 @@ index c68d00b..41a9df1 100644
 +// While a movie shows (24-bit display, drawn from disp24_tex, never from the
 +// HD VRAM), uploads are not copied up to the HD VRAM one by one: at 8x each
 +// copy is a pass over the 8192x4096 target, 20 a movie frame, and the
-+// graphics card fell behind (movies lagged at HD only; uploads took about
-+// 11 ms a frame). Their area is gathered and copied once, before the
++// graphics card fell behind (movies lagged at HD only, owner's timing log:
++// uploads 11 ms a frame). Their area is gathered and copied once, before the
 +// HD VRAM is used again (drawing, a read of it, or the 15-bit display).
 +static SDL_Rect hd_pending = {0, 0, 0, 0};
 +static void HdCatchUp(void) {

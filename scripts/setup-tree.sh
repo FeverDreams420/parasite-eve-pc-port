@@ -34,7 +34,9 @@ cp -R "$HERE/tools/pc/." tools/pc/
 cp "$HERE/ROADMAP.md" .
 
 # PsyZ patches, in order (pc/psyz-patches/0001-..., 0002-..., ...).
-git -C third_party/psyz apply "$DEST"/pc/psyz-patches/[0-9][0-9][0-9][0-9]-*.patch
+for p in "$DEST"/pc/psyz-patches/[0-9][0-9][0-9][0-9]-*.patch; do
+    git -C third_party/psyz apply "$p" || { echo "error: $p did not apply" >&2; exit 1; }
+done
 
 echo
 echo "Source tree ready in $DEST (branch native)."

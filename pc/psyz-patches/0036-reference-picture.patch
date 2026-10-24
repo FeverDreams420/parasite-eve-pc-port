@@ -1,0 +1,525 @@
+diff --git a/psyz/include/psyz/video.h b/psyz/include/psyz/video.h
+index 0fbe557..baa5341 100644
+--- a/psyz/include/psyz/video.h
++++ b/psyz/include/psyz/video.h
+@@ -436,6 +436,20 @@ typedef struct {
+ int Psyz_VideoVramCheck(Psyz_VramCheck* out, int full);
+ void Psyz_VideoVramCheckFree(Psyz_VramCheck* c);
+ 
++/**
++ * @brief Debug reference picture. From Psyz_VideoRefBegin on, everything
++ * drawn is also drawn at 1x the way the PS1 draws it (whole-pixel positions,
++ * flat textures, no sharper text or smooth shadows, 15-bit colour) into a
++ * copy of the VRAM; fills, uploads and copies are repeated there.
++ * Psyz_VideoRefCapture returns its display area like
++ * Psyz_VideoAllocCapturedFrame (free() it), or NULL (not on, or a 24-bit
++ * display), and in coverage how much of the display area the reference drew
++ * since it began (0..1, by bounding box). Psyz_VideoRefEnd stops it.
++ */
++int Psyz_VideoRefBegin(void);
++unsigned char* Psyz_VideoRefCapture(int* w, int* h, float* coverage);
++void Psyz_VideoRefEnd(void);
++
+ /** @brief Debug: the next present is also saved (1920x1080 PPM) to path. */
+ void Psyz_VideoPresentTestNext(const char* path);
+ 
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index 5db4ab7..97bc1f8 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -1057,6 +1057,81 @@ static void KnownDrawn(SDL_Rect r) {
+     known_drawn = r;
+ }
+ 
++// Reference picture (Psyz_VideoRefBegin): while on, every batch is also drawn
++// at 1x the way the PS1 draws it (whole-pixel positions, flat textures, no
++// sharper text or smooth shadows, colours rounded to 15 bits) into vram_ref,
++// which starts as a copy of the VRAM. Fills, uploads and copies are repeated
++// in it. Textures are still read from vram_sample, so an effect that reads
++// back what was drawn gets the HD picture copied down.
++static SDL_GPUTexture* vram_ref;
++static SDL_GPUTexture* ref_bounce;
++static SDL_GPUBuffer* ref_vbuf;
++static SDL_GPUTransferBuffer* ref_transfer;
++static bool ref_on;
++static SDL_Rect ref_drawn; // bounding box of what the reference drew or got
++static SDL_GPUTexture* vchk_small; // VRAM check: the HD VRAM one texel per pixel
++static SDL_GPUCommandBuffer* AcquireCmd(void);
++static void RefNoteDrawn(int x, int y, int w, int h) {
++    const int x0 = CLAMP(x, 0, VRAM_W), y0 = CLAMP(y, 0, VRAM_H);
++    const int x1 = CLAMP(x + w, 0, VRAM_W), y1 = CLAMP(y + h, 0, VRAM_H);
++    if (x1 <= x0 || y1 <= y0) {
++        return;
++    }
++    if (ref_drawn.w <= 0 || ref_drawn.h <= 0) {
++        ref_drawn = (SDL_Rect){x0, y0, x1 - x0, y1 - y0};
++        return;
++    }
++    const int ux0 = SDL_min(ref_drawn.x, x0), uy0 = SDL_min(ref_drawn.y, y0);
++    const int ux1 = SDL_max(ref_drawn.x + ref_drawn.w, x1);
++    const int uy1 = SDL_max(ref_drawn.y + ref_drawn.h, y1);
++    ref_drawn = (SDL_Rect){ux0, uy0, ux1 - ux0, uy1 - uy0};
++}
++// a fill or upload: the same pixels of the 1x VRAM into the reference
++static void RefCopyFromVram(int x, int y, int w, int h) {
++    if (!ref_on || !vram_ref || w <= 0 || h <= 0) {
++        return;
++    }
++    SDL_GPUCommandBuffer* cmd = AcquireCmd();
++    if (!cmd) {
++        return;
++    }
++    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
++    const SDL_GPUTextureLocation src = {.texture = vram_render, .x = (Uint32)x, .y = (Uint32)y};
++    const SDL_GPUTextureLocation dst = {.texture = vram_ref, .x = (Uint32)x, .y = (Uint32)y};
++    SDL_CopyGPUTextureToTexture(copy, &src, &dst, (Uint32)w, (Uint32)h, 1, false);
++    SDL_EndGPUCopyPass(copy);
++    RefNoteDrawn(x, y, w, h);
++}
++// MoveImage inside the reference (its own pixels, which may differ from the
++// 1x VRAM where it drew)
++static void RefMove(int sx, int sy, int dx, int dy, int w, int h) {
++    if (!ref_on || !vram_ref || w <= 0 || h <= 0) {
++        return;
++    }
++    SDL_GPUCommandBuffer* cmd = AcquireCmd();
++    if (!cmd) {
++        return;
++    }
++    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
++    if (!(sx < dx + w && dx < sx + w && sy < dy + h && dy < sy + h)) {
++        const SDL_GPUTextureLocation a = {.texture = vram_ref, .x = (Uint32)sx, .y = (Uint32)sy};
++        const SDL_GPUTextureLocation b = {.texture = ref_bounce, .x = (Uint32)sx, .y = (Uint32)sy};
++        const SDL_GPUTextureLocation c = {.texture = vram_ref, .x = (Uint32)dx, .y = (Uint32)dy};
++        SDL_CopyGPUTextureToTexture(copy, &a, &b, (Uint32)w, (Uint32)h, 1, false);
++        SDL_CopyGPUTextureToTexture(copy, &b, &c, (Uint32)w, (Uint32)h, 1, false);
++    } else {
++        for (int row = 0; row < h; row++) {
++            const SDL_GPUTextureLocation a = {
++                .texture = vram_ref, .x = (Uint32)sx, .y = (Uint32)(sy + row)};
++            const SDL_GPUTextureLocation c = {
++                .texture = vram_ref, .x = (Uint32)dx, .y = (Uint32)(dy + row)};
++            SDL_CopyGPUTextureToTexture(copy, &a, &c, (Uint32)w, 1, 1, false);
++        }
++    }
++    SDL_EndGPUCopyPass(copy);
++    RefNoteDrawn(dx, dy, w, h);
++}
++
+ // Decode the 24-bit display area (w pixels = w*3/2 VRAM halfwords per row)
+ // into disp24_rgb (RGB888) and upload it to disp24_tex as RGBA8888.
+ static bool Build24BitDisplay(int w, int h) {
+@@ -2032,6 +2107,23 @@ static void QuitPlatform(void) {
+             SDL_ReleaseGPUGraphicsPipeline(device, pipe_clear);
+             pipe_clear = NULL;
+         }
++        // debug: VRAM check and reference picture
++        SDL_GPUTexture* dbg_tex[3] = {vchk_small, vram_ref, ref_bounce};
++        for (int i = 0; i < 3; i++) {
++            if (dbg_tex[i]) {
++                SDL_ReleaseGPUTexture(device, dbg_tex[i]);
++            }
++        }
++        vchk_small = vram_ref = ref_bounce = NULL;
++        if (ref_vbuf) {
++            SDL_ReleaseGPUBuffer(device, ref_vbuf);
++            ref_vbuf = NULL;
++        }
++        if (ref_transfer) {
++            SDL_ReleaseGPUTransferBuffer(device, ref_transfer);
++            ref_transfer = NULL;
++        }
++        ref_on = false;
+         if (vram_render) {
+             SDL_ReleaseGPUTexture(device, vram_render);
+             vram_render = NULL;
+@@ -3250,6 +3342,11 @@ static void Draw_ClearImage_(PS1_RECT* rect, u_char r, u_char g, u_char b) {
+     SDL_EndGPURenderPass(pass);
+     MarkVramDirty((SDL_Rect){rect->x, rect->y, rect->w, rect->h});
+     SyncNativeVramToScaled(rect->x, rect->y, rect->w, rect->h);
++    {
++        const int x0 = CLAMP(rect->x, 0, VRAM_W), y0 = CLAMP(rect->y, 0, VRAM_H);
++        RefCopyFromVram(x0, y0, CLAMP(rect->x + rect->w, 0, VRAM_W) - x0,
++                        CLAMP(rect->y + rect->h, 0, VRAM_H) - y0);
++    }
+ }
+ 
+ static void Draw_LoadImage_(PS1_RECT* rect, u_long* p);
+@@ -3308,6 +3405,7 @@ static void Draw_LoadImage_(PS1_RECT* rect, u_long* p) {
+     SDL_EndGPUCopyPass(copy);
+     MarkVramDirty((SDL_Rect){rect->x, rect->y, rect->w, rect->h});
+     SyncNativeVramToScaled(rect->x, rect->y, rect->w, rect->h);
++    RefCopyFromVram(rect->x, rect->y, rect->w, rect->h);
+ }
+ 
+ void Draw_StoreImage(PS1_RECT* rect, u_long* p) {
+@@ -3421,6 +3519,7 @@ static void Draw_MoveImage_(PS1_RECT* rect, unsigned int x, unsigned int y) {
+     MarkVramDirty((SDL_Rect){dst_x, dst_y, copy_w, copy_h});
+     MarkVramDirty((SDL_Rect){src_x, src_y, copy_w, copy_h});
+     SyncNativeVramToScaled(dst_x, dst_y, copy_w, copy_h);
++    RefMove(src_x, src_y, dst_x, dst_y, copy_w, copy_h);
+ }
+ 
+ void Draw_ResetBuffer(void) {
+@@ -3433,6 +3532,45 @@ void Draw_ResetBuffer(void) {
+     batch_sample_all = false;
+ }
+ 
++static void DrawBatchTriangles(SDL_GPURenderPass* pass) {
++    // every primitive (including lines, expanded to quads) is a triangle list
++    const int prim_size = 3;
++    int start = 0;
++    while (start < n_indices) {
++        Vertex* v = &vertex_buf[index_buf[start]];
++        bool need_subtract = is_subtract_abr(v);
++        int end = start + prim_size;
++        while (end < n_indices) {
++            v = &vertex_buf[index_buf[end]];
++            bool next_subtract = is_subtract_abr(v);
++            if (next_subtract != need_subtract) {
++                break;
++            }
++            end += prim_size;
++        }
++        while (need_subtract && start < end) {
++            int group_end = SubtractGroupEnd(start, end);
++            Uint32 count = (Uint32)(group_end - start);
++            SDL_BindGPUGraphicsPipeline(pass, pipe_tri[BLEND_SUB]);
++            SDL_DrawGPUIndexedPrimitives(pass, count, 1, (Uint32)start, 0, 0);
++            if (!is_untextured(&vertex_buf[index_buf[start]])) {
++                SDL_BindGPUGraphicsPipeline(pass, pipe_tri[BLEND_SUB_OPAQUE]);
++                SDL_DrawGPUIndexedPrimitives(
++                    pass, count, 1, (Uint32)start, 0, 0);
++            }
++            start = group_end;
++        }
++        if (start < end) {
++            SDL_BindGPUGraphicsPipeline(pass, pipe_tri[BLEND_ADD]);
++            SDL_DrawGPUIndexedPrimitives(
++                pass, (Uint32)(end - start), 1, (Uint32)start, 0, 0);
++            start = end;
++        }
++    }
++}
++
++static void RefDrawBatch(SDL_GPUCommandBuffer* cmd, float squeeze, float squeeze_centre,
++                         SDL_Rect clip);
+ static void Draw_FlushBuffer_(void);
+ void Draw_FlushBuffer(void) {
+     if (n_vertices == 0) {
+@@ -3560,41 +3698,11 @@ static void Draw_FlushBuffer_(void) {
+         internal_res <= 1 ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+     SDL_PushGPUVertexUniformData(cmd, 0, offset_ubo, sizeof(offset_ubo));
+ 
+-    // every primitive (including lines, expanded to quads) is a triangle list
+-    const int prim_size = 3;
+-    int start = 0;
+-    while (start < n_indices) {
+-        Vertex* v = &vertex_buf[index_buf[start]];
+-        bool need_subtract = is_subtract_abr(v);
+-        int end = start + prim_size;
+-        while (end < n_indices) {
+-            v = &vertex_buf[index_buf[end]];
+-            bool next_subtract = is_subtract_abr(v);
+-            if (next_subtract != need_subtract) {
+-                break;
+-            }
+-            end += prim_size;
+-        }
+-        while (need_subtract && start < end) {
+-            int group_end = SubtractGroupEnd(start, end);
+-            Uint32 count = (Uint32)(group_end - start);
+-            SDL_BindGPUGraphicsPipeline(pass, pipe_tri[BLEND_SUB]);
+-            SDL_DrawGPUIndexedPrimitives(pass, count, 1, (Uint32)start, 0, 0);
+-            if (!is_untextured(&vertex_buf[index_buf[start]])) {
+-                SDL_BindGPUGraphicsPipeline(pass, pipe_tri[BLEND_SUB_OPAQUE]);
+-                SDL_DrawGPUIndexedPrimitives(
+-                    pass, count, 1, (Uint32)start, 0, 0);
+-            }
+-            start = group_end;
+-        }
+-        if (start < end) {
+-            SDL_BindGPUGraphicsPipeline(pass, pipe_tri[BLEND_ADD]);
+-            SDL_DrawGPUIndexedPrimitives(
+-                pass, (Uint32)(end - start), 1, (Uint32)start, 0, 0);
+-            start = end;
+-        }
+-    }
++    DrawBatchTriangles(pass);
+     SDL_EndGPURenderPass(pass);
++    if (ref_on) {
++        RefDrawBatch(cmd, squeeze, squeeze_centre, clip);
++    }
+     if (internal_res <= 1) {
+         MarkVramDirty(scissor_rect);
+     }
+@@ -3706,7 +3814,6 @@ int Psyz_VideoVramCheck(Psyz_VramCheck* out, int full) {
+     if (ok && n > 1 && !out->full) {
+         // one texel per pixel, picked by the same nearest blit that copies a
+         // drawn area down (SyncScaledVramToNative)
+-        static SDL_GPUTexture* vchk_small;
+         if (!vchk_small) {
+             const SDL_GPUTextureCreateInfo info = {
+                 .type = SDL_GPU_TEXTURETYPE_2D,
+@@ -3812,3 +3919,191 @@ void Psyz_VideoVramCheckFree(Psyz_VramCheck* c) {
+     c->status = NULL;
+     c->native = c->sample = c->hd = NULL;
+ }
++
++// One batch again into the reference picture (see vram_ref), at 1x, as the
++// PS1 draws it.
++static void RefDrawBatch(SDL_GPUCommandBuffer* cmd, float squeeze, float squeeze_centre,
++                         SDL_Rect clip) {
++    if (!vram_ref || !ref_vbuf || !ref_transfer || n_vertices <= 0) {
++        return;
++    }
++    Vertex* map = SDL_MapGPUTransferBuffer(device, ref_transfer, true);
++    if (!map) {
++        return;
++    }
++    for (int i = 0; i < n_vertices; i++) {
++        Vertex v = vertex_buf[i];
++        v.fx = 0;
++        v.fy = 0;
++        v.w = 0;
++        v.t &= (unsigned short)~TPAGE_SMOOTH;
++        map[i] = v;
++    }
++    SDL_UnmapGPUTransferBuffer(device, ref_transfer);
++    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
++    const SDL_GPUTransferBufferLocation src = {.transfer_buffer = ref_transfer};
++    const SDL_GPUBufferRegion dst = {
++        .buffer = ref_vbuf, .size = (Uint32)(sizeof(Vertex) * n_vertices)};
++    SDL_UploadToGPUBuffer(copy, &src, &dst, true);
++    SDL_EndGPUCopyPass(copy);
++
++    const SDL_GPUColorTargetInfo target = {
++        .texture = vram_ref,
++        .load_op = SDL_GPU_LOADOP_LOAD,
++        .store_op = SDL_GPU_STOREOP_STORE,
++    };
++    SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &target, 1, NULL);
++    const float grid_scale_x = GetDrawGridXScale();
++    const SDL_GPUViewport viewport = {
++        .x = (float)draw_offset.x * (1.0f - grid_scale_x),
++        .y = 0.0f,
++        .w = (float)VRAM_W * grid_scale_x,
++        .h = (float)VRAM_H,
++        .min_depth = 0.0f,
++        .max_depth = 1.0f,
++    };
++    SDL_SetGPUViewport(pass, &viewport);
++    SDL_SetGPUScissor(pass, &clip);
++    const SDL_GPUBufferBinding vb = {.buffer = ref_vbuf};
++    SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
++    const SDL_GPUBufferBinding ib = {.buffer = ibuf};
++    SDL_BindGPUIndexBuffer(pass, &ib, SDL_GPU_INDEXELEMENTSIZE_16BIT);
++    SDL_GPUTextureSamplerBinding samplers[1 + PSYZ_HIRES_SLOTS] = {
++        {.texture = vram_sample, .sampler = vram_sampler}};
++    for (int i = 0; i < PSYZ_HIRES_SLOTS; i++) {
++        samplers[1 + i].texture = hires_dummy;
++        samplers[1 + i].sampler = vram_sampler;
++    }
++    SDL_BindGPUFragmentSamplers(pass, 0, samplers, 1 + PSYZ_HIRES_SLOTS);
++    const Sint32 hires_off[PSYZ_HIRES_SLOTS * 8] = {0};
++    SDL_PushGPUFragmentUniformData(cmd, 0, hires_off, sizeof(hires_off));
++    const float offset_ubo[8] = {(float)draw_offset.x, (float)draw_offset.y, squeeze,
++                                 squeeze_centre, 1.0f, 0.0f, 0.0f, 0.0f};
++    SDL_PushGPUVertexUniformData(cmd, 0, offset_ubo, sizeof(offset_ubo));
++    DrawBatchTriangles(pass);
++    SDL_EndGPURenderPass(pass);
++    RefNoteDrawn(clip.x, clip.y, clip.w, clip.h);
++}
++
++int Psyz_VideoRefBegin(void) {
++    if (!device || !vram_render) {
++        return -1;
++    }
++    if (ref_on) {
++        return 0;
++    }
++    Draw_FlushBuffer(); // what was queued before belongs to the frame before
++    if (!vram_ref) {
++        const SDL_GPUTextureCreateInfo info = {
++            .type = SDL_GPU_TEXTURETYPE_2D,
++            .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
++            .usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
++            .width = VRAM_W,
++            .height = VRAM_H,
++            .layer_count_or_depth = 1,
++            .num_levels = 1,
++        };
++        vram_ref = SDL_CreateGPUTexture(device, &info);
++        ref_bounce = SDL_CreateGPUTexture(device, &info);
++        const SDL_GPUBufferCreateInfo binfo = {
++            .usage = SDL_GPU_BUFFERUSAGE_VERTEX,
++            .size = MAX_VERTEX_COUNT * sizeof(Vertex),
++        };
++        ref_vbuf = SDL_CreateGPUBuffer(device, &binfo);
++        const SDL_GPUTransferBufferCreateInfo tinfo = {
++            .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
++            .size = MAX_VERTEX_COUNT * sizeof(Vertex),
++        };
++        ref_transfer = SDL_CreateGPUTransferBuffer(device, &tinfo);
++        if (!vram_ref || !ref_bounce || !ref_vbuf || !ref_transfer) {
++            ERRORF("reference picture: %s", SDL_GetError());
++            return -1;
++        }
++    }
++    HdCatchUp();
++    SDL_GPUCommandBuffer* cmd = AcquireCmd();
++    if (!cmd) {
++        return -1;
++    }
++    // start from the VRAM as it is: the 1x VRAM, and what was drawn at HD
++    // and not yet copied down, copied down into the reference only
++    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
++    const SDL_GPUTextureLocation src = {.texture = vram_render};
++    const SDL_GPUTextureLocation dst = {.texture = vram_ref};
++    SDL_CopyGPUTextureToTexture(copy, &src, &dst, VRAM_W, VRAM_H, 1, false);
++    SDL_EndGPUCopyPass(copy);
++    if (internal_res > 1 && scaled_vram_render && scaled_dirty.w > 0 && scaled_dirty.h > 0) {
++        const SDL_Rect r = scaled_dirty;
++        const SDL_GPUBlitInfo blit = {
++            .source = {.texture = scaled_vram_render,
++                       .x = (Uint32)(r.x * internal_res),
++                       .y = (Uint32)(r.y * internal_res),
++                       .w = (Uint32)(r.w * internal_res),
++                       .h = (Uint32)(r.h * internal_res)},
++            .destination = {.texture = vram_ref,
++                            .x = (Uint32)r.x,
++                            .y = (Uint32)r.y,
++                            .w = (Uint32)r.w,
++                            .h = (Uint32)r.h},
++            .load_op = SDL_GPU_LOADOP_LOAD,
++            .filter = SDL_GPU_FILTER_NEAREST,
++        };
++        SDL_BlitGPUTexture(cmd, &blit);
++    }
++    ref_drawn = (SDL_Rect){0, 0, 0, 0};
++    ref_on = true;
++    return 0;
++}
++
++void Psyz_VideoRefEnd(void) {
++    Draw_FlushBuffer();
++    ref_on = false;
++}
++
++unsigned char* Psyz_VideoRefCapture(int* w, int* h, float* coverage) {
++    if (!ref_on || !vram_ref || disp_rgb24) {
++        return NULL;
++    }
++    Draw_FlushBuffer();
++    int x = display_area.x, y = display_area.y;
++    int dw = display_size.x, dh = display_size.y;
++    if (x + dw > VRAM_W) {
++        dw = VRAM_W - x;
++    }
++    if (y + dh > VRAM_H) {
++        dh = VRAM_H - y;
++    }
++    if (dw <= 0 || dh <= 0) {
++        return NULL;
++    }
++    u8* rgba = malloc((size_t)dw * dh * 4);
++    unsigned char* out = calloc((size_t)dw * dh, 3);
++    if (!rgba || !out || !VchkDownload(vram_ref, x, y, dw, dh, rgba)) {
++        free(rgba);
++        free(out);
++        return NULL;
++    }
++    int top, lines;
++    VisibleRows(&top, &lines);
++    for (int row = top; row < top + lines && row < dh; row++) {
++        const u8* s = rgba + (size_t)(row - top) * dw * 4;
++        unsigned char* d = out + (size_t)row * dw * 3;
++        for (int i = 0; i < dw; i++, s += 4, d += 3) {
++            d[0] = s[0];
++            d[1] = s[1];
++            d[2] = s[2];
++        }
++    }
++    free(rgba);
++    if (coverage) {
++        const int ix0 = SDL_max(x, ref_drawn.x), iy0 = SDL_max(y, ref_drawn.y);
++        const int ix1 = SDL_min(x + dw, ref_drawn.x + ref_drawn.w);
++        const int iy1 = SDL_min(y + dh, ref_drawn.y + ref_drawn.h);
++        *coverage = (ix1 > ix0 && iy1 > iy0) ? (float)(ix1 - ix0) * (float)(iy1 - iy0) /
++                                                   ((float)dw * (float)dh)
++                                             : 0.0f;
++    }
++    *w = dw;
++    *h = dh;
++    return out;
++}
+diff --git a/psyz/tests/test_libgpu.c b/psyz/tests/test_libgpu.c
+index 4b40119..e7385f0 100644
+--- a/psyz/tests/test_libgpu.c
++++ b/psyz/tests/test_libgpu.c
+@@ -700,6 +700,65 @@ ZTEST(gpu, vram_check) {
+     ExpectVramCheckClean(1);
+     zassert_s32_eq(0, Psyz_VideoSetInternalResolution(1));
+ }
++
++// Psyz_VideoRefBegin: the reference picture drawn alongside 2x is the same as
++// the scene drawn at 1x.
++static void RefScene(u_short tpage, u_short clut) {
++    ClearImage(&cdb->draw.clip, 60, 120, 120);
++    SetPolyFT4(&cdb->ft4[0]);
++    setXYWH(&cdb->ft4[0], 16, 16, 64, 64);
++    setRGB0(&cdb->ft4[0], 128, 128, 128);
++    setUVWH(&cdb->ft4[0], 0, 0, 64, 64);
++    setSemiTrans(&cdb->ft4[0], 0);
++    cdb->ft4[0].tpage = tpage;
++    cdb->ft4[0].clut = clut;
++    SetPolyFT4(&cdb->ft4[1]);
++    setXY4(&cdb->ft4[1], 100, 30, 190, 50, 110, 150, 210, 170);
++    setRGB0(&cdb->ft4[1], 200, 100, 60);
++    setUV4(&cdb->ft4[1], 0, 0, 63, 0, 0, 63, 63, 63);
++    setSemiTrans(&cdb->ft4[1], 1);
++    cdb->ft4[1].tpage = tpage;
++    cdb->ft4[1].clut = clut;
++    ClearOTag(cdb->ot, OTSIZE);
++    AddPrim(cdb->ot, &db[0].ft4[0]);
++    AddPrim(cdb->ot, &db[0].ft4[1]);
++    DrawOTag(cdb->ot);
++    DrawSync(0);
++    VSync(0);
++}
++
++ZTEST(gpu, reference_picture) {
++    u_short tpage, clut;
++    int w1, h1, w2, h2;
++    float cover = 0.0f;
++    zskip_targets("psp;ps1");
++    if (LoadTim(img_4bpp, &tpage, &clut)) {
++        return;
++    }
++    RefScene(tpage, clut);
++    unsigned char* at1x = Psyz_VideoAllocCapturedFrame(&w1, &h1);
++    zassert_ptr_ne(NULL, at1x);
++    zassert_s32_eq(0, Psyz_VideoSetInternalResolution(2));
++    {
++        // so a reference that drew nothing cannot match
++        RECT all = {0, 0, 640, 480};
++        ClearImage(&all, 0, 0, 0);
++        DrawSync(0);
++    }
++    zassert_s32_eq(0, Psyz_VideoRefBegin());
++    RefScene(tpage, clut);
++    unsigned char* ref = Psyz_VideoRefCapture(&w2, &h2, &cover);
++    Psyz_VideoRefEnd();
++    zassert_ptr_ne(NULL, ref);
++    zexpect_s32_eq(w1, w2);
++    zexpect_s32_eq(h1, h2);
++    zexpect_s32_eq(100, (int)(cover * 100.0f + 0.5f));
++    zexpect_u8array_eq(at1x, ref, (size_t)w1 * h1 * 3);
++    free(at1x);
++    free(ref);
++    zassert_ptr_eq(NULL, Psyz_VideoRefCapture(&w2, &h2, &cover)); // ended
++    zassert_s32_eq(0, Psyz_VideoSetInternalResolution(1));
++}
+ #endif
+ #endif
+ 

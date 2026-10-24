@@ -1,6 +1,7 @@
 #ifndef PE_HOST_OVERLAYS_H
 #define PE_HOST_OVERLAYS_H
 
+#include <stdio.h>
 #include "pe_host_func_table.h"
 
 typedef struct {
@@ -32,6 +33,7 @@ void pe_host_overlays_note_write(unsigned int addr, unsigned int len);
 /* The same for a CD read of `len` bytes from disc sector `disc_lba`. */
 /* Crash report: what is loaded where. */
 void pe_host_overlays_report(void);
+void pe_host_overlays_report_to(FILE *f);
 void pe_host_overlays_note_read(unsigned int addr, unsigned int len, int disc_lba);
 
 #endif

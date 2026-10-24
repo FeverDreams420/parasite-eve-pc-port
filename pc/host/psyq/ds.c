@@ -12,6 +12,8 @@
  *                      2 other disc, 1 error, 16 shell open
  *   DsShellOpen     -> the library's shell-open counter (g_CdDiscType);
  *                      it changes when the lid is opened (disc swap)
+ *   DsStatus        -> standby; lid open once when the disc screen wants
+ *                      the other disc (see pe_psyq_DsStatus)
  *   DsSearchFile    -> the DslFILE on success, 0 not found, -1 disc error
  *   DsSync/DsCommand-> command completes immediately (DslComplete = 2)
  */
@@ -63,7 +65,37 @@ int pe_psyq_DsReset(void) { return 1; }
 void pe_psyq_DsSetDebug(int level) { (void)level; }
 int pe_psyq_DsSystemStatus(void) { return pe_host_disc_ok() ? 1 : 3; }
 int pe_psyq_DsQueueLen(void) { return 0; }
-int pe_psyq_DsStatus(void) { return DSL_STAT_STANDBY; }
+/* Disc change. DsStatus is called only by the game's disc screen
+ * (Render_InitDisplayLists), after it has stopped the drive, and it waits
+ * for the lid-open bit. The disc it wants is the one not in the drive: the
+ * game records the disc in g_PeImageMountFlags (bit 0 Disc 1, bit 1 Disc 2).
+ * Here the other image goes in, the lid counter moves on (the screen takes
+ * the new count when it closes, so reads after it carry on), and the lid
+ * reports open once. The screen then finds the disc with its own
+ * OpenPeImage. A wrong guess fixes itself: the screen asks again and the
+ * other disc goes back in. */
+#define DSL_STAT_SHELL_OPEN 0x10
+#define PE_MOUNT_FLAGS 0x800B0DCDu
+int pe_psyq_DsStatus(void) {
+    unsigned char mounted = *(volatile unsigned char *)(uintptr_t)PE_MOUNT_FLAGS;
+    int want = mounted == 1 ? 1 : mounted == 2 ? 0 : -1;
+    static int s_warned;
+    if (want < 0 || want == pe_host_disc_current()) {
+        return DSL_STAT_STANDBY;
+    }
+    if (pe_host_disc_select(want) != 0) {
+        if (!s_warned) {
+            fprintf(stderr, "pe: the game asks for Disc 2, but no Disc 2 image was found "
+                            "(put \"Parasite Eve (USA) (Disc 2).cue\" next to Disc 1, or set PE_DISC2)\n");
+            s_warned = 1;
+        }
+        return DSL_STAT_STANDBY;
+    }
+    s_warned = 0;
+    g_shell_count++;
+    fprintf(stderr, "pe: disc change: Disc %d in the drive\n", want + 1);
+    return DSL_STAT_STANDBY | DSL_STAT_SHELL_OPEN;
+}
 int pe_psyq_DsShellOpen(void) { return g_shell_count; }
 void pe_host_disc_shell_cycled(void) { g_shell_count++; }
 /* CD audio -> SPU attenuation (CdlATV: L->L, L->R, R->R, R->L), applied by
@@ -101,13 +133,14 @@ static int next_id(void) {
 /* For crash reports: the last CD reads. */
 static struct { int lba, sectors; unsigned int dst; } g_cd_recent[8];
 static unsigned int g_cd_recent_n;
-void pe_host_cd_report(void) {
+void pe_host_cd_report_to(FILE *f) {
     unsigned int k;
     for (k = g_cd_recent_n > 8 ? g_cd_recent_n - 8 : 0; k < g_cd_recent_n; k++) {
-        fprintf(stderr, "pe:   CD read: sector %d x%d -> 0x%08X\n", g_cd_recent[k % 8].lba,
+        fprintf(f, "pe:   CD read: sector %d x%d -> 0x%08X\n", g_cd_recent[k % 8].lba,
                 g_cd_recent[k % 8].sectors, g_cd_recent[k % 8].dst);
     }
 }
+void pe_host_cd_report(void) { pe_host_cd_report_to(stderr); }
 
 int pe_psyq_DsRead(DslLOC *pos, int sectors, void *buf, int mode) {
     int lba = pos ? pe_psyq_DsPosToInt(pos) : g_last_lba;

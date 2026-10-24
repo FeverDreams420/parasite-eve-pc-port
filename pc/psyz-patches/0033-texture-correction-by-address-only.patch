@@ -1,0 +1,55 @@
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index 56bbff9..1c9e79a 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -2576,7 +2576,7 @@ int Draw_PushPrim(u_long* packets, int max_len) {
+                 // tagged it, else by its rounded screen XY)
+                 int n = (code & EXTRA_VERTEX) ? 4 : 3;
+                 float wz[4];
+-                int nz = 0;
++                int nz = 0; // corners with a depth found by address
+                 for (int k = 0; k < n; k++) {
+                     float px, py, pz = 0.0f;
+                     Vertex* pv = &vertex_cur[k];
+@@ -2609,7 +2609,15 @@ int Draw_PushPrim(u_long* packets, int max_len) {
+                     }
+                     if (found) {
+                         pgxp_stat_hit++;
+-                        if (pz >= 1.0f) {
++                        // only a depth found by address counts for texture
++                        // correction: a lookup by rounded screen XY takes the
++                        // newest vertex on that pixel, which can belong to
++                        // another model at another depth (the position error
++                        // is under a pixel, the depth error is not), and the
++                        // texture then warps for that frame (shadow quads,
++                        // drawn from screen XY, flashed when a walking
++                        // character's vertex landed on one of their corners)
++                        if (pz >= 1.0f && pgxp_dbg_found == 1) {
+                             wz[k] = pz;
+                             nz++;
+                         }
+@@ -2622,7 +2630,9 @@ int Draw_PushPrim(u_long* packets, int max_len) {
+                     }
+                 }
+                 // texture correction: a textured polygon with the depth of
+-                // every corner is drawn with perspective, as PGXP does
++                // every corner (all found by address) is drawn with
++                // perspective, as PGXP does; any other is drawn flat, as on
++                // the PS1
+                 if (isTextured && nz == n && pgxp_texture_correction()) {
+                     for (int k = 0; k < n; k++) {
+                         float z = wz[k] > 65535.0f ? 65535.0f : wz[k];
+diff --git a/psyz/src/psyz/libgte.c b/psyz/src/psyz/libgte.c
+index 6ffb7b5..b80d6a8 100644
+--- a/psyz/src/psyz/libgte.c
++++ b/psyz/src/psyz/libgte.c
+@@ -1830,7 +1830,8 @@ static int pgxp_env(int* cache, const char* name) {
+ }
+ static int pgxp_e_pa3 = -1, pgxp_e_untagged = -1, pgxp_e_drop = -1;
+ int pgxp_dbg_code;
+-int pgxp_dbg_found; // debug: how the last lookup found it: 1 by address, 2 by screen XY
++int pgxp_dbg_found; // how the last lookup found it: 1 by address, 2 by screen XY (also
++                    // decides texture correction, sdl3_gpu.c)
+ void Psyz_PgxpNewFrame(void) {
+     static unsigned frames;
+     pgxp_gen++;

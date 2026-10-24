@@ -1,0 +1,309 @@
+diff --git a/psyz/include/psyz/spu.h b/psyz/include/psyz/spu.h
+index a3ba2d8..d3b692d 100644
+--- a/psyz/include/psyz/spu.h
++++ b/psyz/include/psyz/spu.h
+@@ -4,6 +4,13 @@
+ /**
+  * @file spu.h
+  * @brief Platform-agnostic PS1 SPU emulation endpoints.
++ *
++ * Software-SPU state access is serialized with the active audio backend's
++ * recursive mutex. Callers may hold Psyz_AudioLock to batch register/RAM
++ * operations. AudioInit/AudioDestroy lifecycle calls must be serialized by
++ * the host. Before audio initialization, callers serialize SPU access.
++ * A pointer from Psyz_SpuGetRam remains raw storage: hold the audio lock when
++ * accessing it during playback, or use Psyz_SpuMemRead/Psyz_SpuMemWrite.
+  */
+ 
+ #include <psyz/types.h>
+diff --git a/psyz/src/internal.h b/psyz/src/internal.h
+index f12152a..dacd9e7 100644
+--- a/psyz/src/internal.h
++++ b/psyz/src/internal.h
+@@ -36,6 +36,9 @@ void Psyz_PgxpNewFrame(void);
+ // audio pause when the application returns from the background.
+ int Psyz_AudioIsPaused(void);
+ 
++// Discard prefetched external CD input without resetting SPU voices/reverb.
++void Psyz_SpuFlushCdSamples(void);
++
+ // Delivers a kernel event as an emulated device interrupt would: right away,
+ // or at ExitCriticalSection when the caller is inside a critical section.
+ void Psyz_KernelRaise(unsigned int desc, unsigned int spec);
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index 09b3e04..69641b7 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -3147,10 +3147,11 @@ static void Draw_ClearImage_(PS1_RECT* rect, u_char r, u_char g, u_char b) {
+     quad[2].y = (short)(rect->y + rect->h);
+     quad[3].x = (short)(rect->x + rect->w);
+     quad[3].y = (short)(rect->y + rect->h);
++    /* The fill writes RGB555 before any later polygon blends with VRAM. */
+     for (int i = 0; i < 4; i++) {
+-        quad[i].r = r;
+-        quad[i].g = g;
+-        quad[i].b = b;
++        quad[i].r = color_5to8(r >> 3);
++        quad[i].g = color_5to8(g >> 3);
++        quad[i].b = color_5to8(b >> 3);
+         quad[i].a = 0;
+     }
+ 
+diff --git a/psyz/src/psp/psp_sas.c b/psyz/src/psp/psp_sas.c
+index 00c9bde..c71ac88 100644
+--- a/psyz/src/psp/psp_sas.c
++++ b/psyz/src/psp/psp_sas.c
+@@ -824,6 +824,12 @@ static void spu_consume(short* out, const short* sas, int frames) {
+     }
+ }
+ 
++void Psyz_SpuFlushCdSamples(void) {
++    Psyz_AudioLock();
++    spu.cd_ring_read=spu.cd_ring_count=0;
++    Psyz_AudioUnlock();
++}
++
+ void Psyz_SpuPullSamples(short* out, int num_frames) {
+     if (!spu.initialized) {
+         memset(out, 0, num_frames * N_CHANNELS * sizeof(short));
+diff --git a/psyz/src/psyz/libcd.c b/psyz/src/psyz/libcd.c
+index d5970de..c164e07 100644
+--- a/psyz/src/psyz/libcd.c
++++ b/psyz/src/psyz/libcd.c
+@@ -773,6 +773,10 @@ unsigned Psyz_CdXaQueued(void) { return xa_ext.count; }
+ void Psyz_CdXaStop(void) {
+     Psyz_AudioLock();
+     memset(&xa_ext, 0, sizeof(xa_ext));
++    /* Also drop what the SPU already took from the CD input (up to about
++     * 90 ms), so the end of the last stream does not play after a stop or
++     * at the start of the next one. */
++    Psyz_SpuFlushCdSamples();
+     Psyz_AudioUnlock();
+ }
+ 
+@@ -986,6 +990,7 @@ static void psyz_xa_read(void) {
+     }
+     Psyz_AudioLock();
+     xa_reset_stream();
++    Psyz_SpuFlushCdSamples();
+     xa.cur_abs_sector = CdPosToInt(&CD_pos) - 1;
+     xa.active = 1;
+     is_playing = 1;
+@@ -997,6 +1002,7 @@ static void psyz_stop() {
+     Psyz_AudioLock();
+     is_playing = 0;
+     xa.active = 0;
++    Psyz_SpuFlushCdSamples();
+     data_read_active = 0;
+     data_sector_valid = 0;
+     close_track_file();
+@@ -1009,6 +1015,7 @@ static void psyz_pause() {
+     Psyz_AudioLock();
+     is_playing = 0;
+     xa.active = 0;
++    Psyz_SpuFlushCdSamples();
+     data_read_active = 0;
+     data_sector_valid = 0;
+     Psyz_AudioUnlock();
+diff --git a/psyz/src/psyz/psyz_spu.c b/psyz/src/psyz/psyz_spu.c
+index d8b52b8..db9a233 100644
+--- a/psyz/src/psyz/psyz_spu.c
++++ b/psyz/src/psyz/psyz_spu.c
+@@ -43,11 +43,13 @@ static struct {
+ u8* Psyz_SpuGetRam(void) { return spu.ram; }
+ 
+ void Psyz_SpuInit(void) {
+-    if (spu.initialized)
+-        return;
+-    memset(&spu, 0, sizeof(spu));
+-    spu.initialized = 1;
+-    INFOF("SPU emulation initialized");
++    Psyz_AudioLock();
++    if (!spu.initialized) {
++        memset(&spu, 0, sizeof(spu));
++        spu.initialized = 1;
++        INFOF("SPU emulation initialized");
++    }
++    Psyz_AudioUnlock();
+ }
+ 
+ static void spu_reset(void) {
+@@ -66,21 +68,31 @@ static void spu_reset_hot(void) {
+ }
+ 
+ void Psyz_SpuReset(int hot) {
++    Psyz_AudioLock();
+     if (hot) {
+         spu_reset_hot();
+     } else {
+         spu_reset();
+     }
+     spu.initialized = 1;
++    Psyz_AudioUnlock();
+ }
+ 
+ void Psyz_SpuSetTransferAddr(unsigned int addr) {
++    Psyz_AudioLock();
+     spu.transfer_addr = addr & (PSYZ_SPU_RAM_SIZE - 1);
++    Psyz_AudioUnlock();
+ }
+ 
+-unsigned int Psyz_SpuGetTransferAddr(void) { return spu.transfer_addr; }
++unsigned int Psyz_SpuGetTransferAddr(void) {
++    Psyz_AudioLock();
++    unsigned int address = spu.transfer_addr;
++    Psyz_AudioUnlock();
++    return address;
++}
+ 
+ void Psyz_SpuFifoWrite(unsigned short word) {
++    Psyz_AudioLock();
+ #ifdef PLATFORM_LE
+     *(unsigned short*)&spu.ram[spu.transfer_addr] = word;
+ #else
+@@ -88,14 +100,18 @@ void Psyz_SpuFifoWrite(unsigned short word) {
+     spu.ram[spu.transfer_addr + 1] = (unsigned char)((word >> 8) & 0xFF);
+ #endif
+     spu.transfer_addr = (spu.transfer_addr + 2) & (PSYZ_SPU_RAM_SIZE - 1);
++    Psyz_AudioUnlock();
+ }
+ 
+ void Psyz_SpuFifoWriteBulk(const unsigned char* src, unsigned int size) {
++    Psyz_AudioLock();
+     Psyz_SpuMemWrite(spu.transfer_addr, src, size);
+     spu.transfer_addr = (spu.transfer_addr + size) & (PSYZ_SPU_RAM_SIZE - 1);
++    Psyz_AudioUnlock();
+ }
+ 
+ void Psyz_SpuMemRead(unsigned int offset, void* dst, unsigned int size) {
++    Psyz_AudioLock();
+     unsigned int start = offset & (PSYZ_SPU_RAM_SIZE - 1);
+     unsigned int head = PSYZ_SPU_RAM_SIZE - start;
+     if (size <= head) {
+@@ -104,9 +120,11 @@ void Psyz_SpuMemRead(unsigned int offset, void* dst, unsigned int size) {
+         memcpy(dst, &spu.ram[start], head);
+         memcpy((unsigned char*)dst + head, &spu.ram[0], size - head);
+     }
++    Psyz_AudioUnlock();
+ }
+ 
+ void Psyz_SpuMemWrite(unsigned int offset, const void* src, unsigned int size) {
++    Psyz_AudioLock();
+     unsigned int start = offset & (PSYZ_SPU_RAM_SIZE - 1);
+     unsigned int head = PSYZ_SPU_RAM_SIZE - start;
+     if (size <= head) {
+@@ -115,6 +133,7 @@ void Psyz_SpuMemWrite(unsigned int offset, const void* src, unsigned int size) {
+         memcpy(&spu.ram[start], src, head);
+         memcpy(&spu.ram[0], (const unsigned char*)src + head, size - head);
+     }
++    Psyz_AudioUnlock();
+ }
+ 
+ static void spu_key_on_voice(int v) {
+@@ -129,6 +148,9 @@ void Psyz_SpuWrite(unsigned int reg_offset, unsigned short value) {
+     if (reg_offset == offsetof(SPU_RXX, spustat)) { // read-only
+         return;
+     }
++    // Key-on changes the decoder cursor. It must not reset sample_idx while
++    // the mixer is between its block-boundary check and sample consumption.
++    Psyz_AudioLock();
+     _spu_RXX->raw[reg_offset >> 1] = value;
+     // MSVC's C-mode offsetof is not an integer constant expression, so it
+     // cannot appear in a case label. Use an if-chain instead.
+@@ -159,6 +181,7 @@ void Psyz_SpuWrite(unsigned int reg_offset, unsigned short value) {
+     } else if (reg_offset == offsetof(SPU_RXX, trans_fifo)) {
+         Psyz_SpuFifoWrite(value);
+     }
++    Psyz_AudioUnlock();
+ }
+ 
+ unsigned short Psyz_SpuRead(unsigned int reg_offset) {
+@@ -166,17 +189,21 @@ unsigned short Psyz_SpuRead(unsigned int reg_offset) {
+         WARNF("Psyz_SpuRead: bad offset 0x%X", reg_offset);
+         return 0;
+     }
++    Psyz_AudioLock();
++    unsigned short value;
+     // offsetof is not an ICE under MSVC C mode, so it cannot be a case label.
+     if (reg_offset == offsetof(SPU_RXX, trans_addr)) {
+-        return (unsigned short)((spu.transfer_addr >> 3) & 0xFFFF);
+-    }
+-    if (reg_offset == offsetof(SPU_RXX, spustat)) {
++        value = (unsigned short)((spu.transfer_addr >> 3) & 0xFFFF);
++    } else if (reg_offset == offsetof(SPU_RXX, spustat)) {
+         // lower 6 bits mirror SPUCNT's low bits
+         // bit 11, capture-buffer half-pointer, flipped by spu_tick.
+-        return (_spu_RXX->rxx.spucnt & 0x3F) |
+-               (_spu_RXX->rxx.spustat & (1u << 11));
++        value = (_spu_RXX->rxx.spucnt & 0x3F) |
++                (_spu_RXX->rxx.spustat & (1u << 11));
++    } else {
++        value = _spu_RXX->raw[reg_offset >> 1];
+     }
+-    return _spu_RXX->raw[reg_offset >> 1];
++    Psyz_AudioUnlock();
++    return value;
+ }
+ 
+ static void write_capture(unsigned int idx, short val) {
+@@ -406,12 +433,20 @@ static void spu_tick(short* out) {
+     }
+ }
+ 
++void Psyz_SpuFlushCdSamples(void) {
++    Psyz_AudioLock();
++    spu.cd_ring_read=spu.cd_ring_count=0;
++    Psyz_AudioUnlock();
++}
++
+ void Psyz_SpuPullSamples(short* out, int num_frames) {
++    Psyz_AudioLock();
+     if (!spu.initialized) {
+         memset(out, 0, num_frames * 2 * sizeof(short));
+-        return;
+-    }
+-    for (int i = 0; i < num_frames; i++) {
+-        spu_tick(&out[i * 2]);
++    } else {
++        for (int i = 0; i < num_frames; i++) {
++            spu_tick(&out[i * 2]);
++        }
+     }
++    Psyz_AudioUnlock();
+ }
+diff --git a/psyz/tests/test_libgpu.c b/psyz/tests/test_libgpu.c
+index ded43b3..3500c10 100644
+--- a/psyz/tests/test_libgpu.c
++++ b/psyz/tests/test_libgpu.c
+@@ -566,6 +566,31 @@ ZTEST(gpu, move_image_overlap) {
+     ASSERT_FRAME("move_image_overlap", 0, 1.0f);
+ }
+ 
++ZTEST(gpu, clear_image_quantizes_rgb555_before_blending) {
++    enum { width = 258, height = 6 };
++    u16 expected[width * height], actual[width * height];
++    RECT region = {400, 300, width, height};
++    for (int i = 0; i < width * height; ++i) expected[i] = 0x5a5a;
++    LoadImage(&region, (u_long*)expected);
++    DrawSync(0);
++    for (int row = 0; row < 4; ++row) {
++        for (int value = 0; value < 256; ++value) {
++            u8 r = row == 0 || row == 3 ? value : 0;
++            u8 g = row == 1 ? value : row == 3 ? 255 - value : 0;
++            u8 b = row == 2 ? value : row == 3 ? value ^ 0x55 : 0;
++            RECT pixel = {401 + value, 301 + row, 1, 1};
++            ClearImage(&pixel, r, g, b);
++            expected[(row + 1) * width + value + 1] =
++                (r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10);
++        }
++    }
++    DrawSync(0);
++    StoreImage(&region, (u_long*)actual);
++    DrawSync(0);
++    for (int i = 0; i < width * height; ++i)
++        zexpect_u16_eq(expected[i], actual[i]);
++}
++
+ ZTEST(gpu, move_image_internal_res) {
+     u_short tpage, clut;
+     RECT rect = {16, 16, 64, 64};

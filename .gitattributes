@@ -1,0 +1,2 @@
+# Scripts and patches must keep LF endings, also in a checkout made on Windows.
+* text=auto eol=lf

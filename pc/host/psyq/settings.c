@@ -12,6 +12,9 @@
  *                  other value above 1 is read as 8.
  *
  *   smooth_pictures=0 1: smooth the menu icons and labels at HD (font_hires.c)
+ *   smooth_shadows=1  1: at HD, shadows (small grainy textures drawn
+ *                     subtractively) are mixed between texels instead of
+ *                     showing each texel as a block (PsyZ 0032). 0: as drawn.
  *   soft_borders=0    1: bars beside the picture (4:3 movies, Original, rooms
  *                     stored only as 4:3) show the picture's edge mirrored,
  *                     blurred and darkened instead of black (PsyZ 0020). Also
@@ -22,6 +25,10 @@
  *                     backgrounds are wider than its 4:3 screen, so the sides
  *                     show the real picture (PsyZ 0009, host patch of
  *                     Render_MeshListAndFade.c, full-screen rectangles in gpu.c).
+ *
+ *   disc=C:\path\Parasite Eve (USA) (Disc 1).cue
+ *                     Disc 1 for a start without a command line (launch.c
+ *                     writes it when you pick the disc).
  *
  * Graphics in the game's Set User Preferences screen switches between HD
  * (8x) and Original (1x) (host patch of Menu_CreateMainMenuView.c). F7
@@ -41,6 +48,8 @@ static unsigned g_resolution = 1;
 static unsigned g_widescreen_pref = 1;
 static unsigned g_smooth_pictures = 0;
 static unsigned g_soft_borders = 0;
+static unsigned g_smooth_shadows = 1;
+static char g_disc[1024];
 void pe_host_font_set_scale(unsigned scale);
 
 static void settings_write(void) {
@@ -57,8 +66,14 @@ static void settings_write(void) {
                "# smooth_pictures: 1 = smooth the menu icons and labels at HD (Scale2x), 0 = keep their pixels\n"
                "smooth_pictures=%u\n"
                "# soft_borders: 1 = blurred picture edges beside a 4:3 picture, 0 = black bars\n"
-               "soft_borders=%u\n",
-            g_resolution, g_widescreen_pref, g_smooth_pictures, g_soft_borders);
+               "soft_borders=%u\n"
+               "# smooth_shadows: 1 = smooth the grainy shadows at HD, 0 = keep their pixels\n"
+               "smooth_shadows=%u\n",
+            g_resolution, g_widescreen_pref, g_smooth_pictures, g_soft_borders, g_smooth_shadows);
+    if (g_disc[0]) {
+        fprintf(f, "# disc: your Disc 1 image (Disc 2 is found next to it)\n"
+                   "disc=%s\n", g_disc);
+    }
     fclose(f);
 }
 
@@ -90,10 +105,11 @@ static void apply_resolution_as(unsigned res) {
      * positions, so they stop wobbling (PsyZ 0010) */
     Psyz_VideoSetPrecision(g_resolution > 1 && !getenv("PE_NO_PGXP"));
     Psyz_VideoSetSoftBorders(g_soft_borders != 0);
+    Psyz_VideoSetSmoothShadows(g_smooth_shadows != 0);
 }
 
 /* Movies (24-bit display) at HD: the game's own time went up by about
- * 15 ms a frame and they stuttered (by the timing log, uploads, decoding,
+ * 15 ms a frame and they stuttered (owner's timing logs; uploads, decoding,
  * VRAM copies and drawing cost the same as at 1x, the rest was not found).
  * A movie is a 320x240 picture shown as it is, so HD adds nothing to it:
  * while one plays the resolution is Original, and HD comes back after it.
@@ -103,7 +119,7 @@ unsigned pe_mdec_decodes(void); /* mdec.c */
 void pe_host_movie_check(void) {
     static int off_frames;
     /* A movie decodes a new picture every frame; the Square logo at boot is
-     * a still 24-bit picture, and switching during it broke it. So
+     * a still 24-bit picture, and switching during it broke it (owner). So
      * Original only once the 24-bit display has decoded movie pictures in 8
      * of the last 10 frames. */
     static unsigned last_decodes, history;
@@ -140,31 +156,59 @@ void pe_host_movie_check(void) {
  * slide, widescreen.c), 0 when 4:3. */
 int pe_host_widescreen_margin(void) { return Psyz_VideoGetWidescreen() ? 54 : 0; }
 
+/* Read settings.ini into the values above (nothing applied yet). */
+static void settings_parse(void) {
+    char line[1200];
+    FILE *f = fopen(SETTINGS_FILE, "r");
+    if (!f) {
+        return;
+    }
+    while (fgets(line, sizeof(line), f)) {
+        unsigned v;
+        if (line[0] == '#') {
+            continue;
+        }
+        if (strncmp(line, "disc=", 5) == 0) {
+            size_t n;
+            snprintf(g_disc, sizeof(g_disc), "%s", line + 5);
+            n = strlen(g_disc);
+            while (n && (g_disc[n - 1] == '\n' || g_disc[n - 1] == '\r' || g_disc[n - 1] == ' ')) {
+                g_disc[--n] = 0;
+            }
+        } else if (sscanf(line, " soft_borders = %u", &v) == 1) {
+            g_soft_borders = v != 0;
+        } else if (sscanf(line, " smooth_shadows = %u", &v) == 1) {
+            g_smooth_shadows = v != 0;
+        } else if (sscanf(line, " smooth_pictures = %u", &v) == 1) {
+            g_smooth_pictures = v != 0;
+        } else if (sscanf(line, " widescreen = %u", &v) == 1) {
+            g_widescreen_pref = v != 0;
+        } else if (sscanf(line, " hd_resolution = %u", &v) == 1) {
+            /* older files: HD is always 8x now */
+        } else if (sscanf(line, " resolution = %u", &v) == 1) {
+            g_resolution = v > 1 ? RES_HD : 1;
+        }
+    }
+    fclose(f);
+}
+
 /* Once, at the first game frame. */
 void pe_host_settings_load(void) {
-    char line[256];
-    FILE *f = fopen(SETTINGS_FILE, "r");
-    if (f) {
-        while (fgets(line, sizeof(line), f)) {
-            unsigned v;
-            if (line[0] == '#') {
-                continue;
-            }
-            if (sscanf(line, " soft_borders = %u", &v) == 1) {
-                g_soft_borders = v != 0;
-            } else if (sscanf(line, " smooth_pictures = %u", &v) == 1) {
-                g_smooth_pictures = v != 0;
-            } else if (sscanf(line, " widescreen = %u", &v) == 1) {
-                g_widescreen_pref = v != 0;
-            } else if (sscanf(line, " hd_resolution = %u", &v) == 1) {
-                /* older files: HD is always 8x now */
-            } else if (sscanf(line, " resolution = %u", &v) == 1) {
-                g_resolution = v > 1 ? RES_HD : 1;
-            }
-        }
-        fclose(f);
-    }
+    settings_parse();
     apply_resolution();
+}
+
+/* Disc 1 saved in settings.ini ("" when none); read before the game starts. */
+const char *pe_host_settings_disc(void) {
+    settings_parse();
+    return g_disc;
+}
+
+/* Remember Disc 1; the rest of the file is kept as it is. */
+void pe_host_settings_set_disc(const char *path) {
+    settings_parse();
+    snprintf(g_disc, sizeof(g_disc), "%s", path);
+    settings_write();
 }
 
 /* F7: HD <-> Original, saved at once. */

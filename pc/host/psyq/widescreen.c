@@ -273,7 +273,7 @@ void pe_host_ws_commit(void) {
          * width, wherever it sits: tested by its ends instead, a room a bit
          * narrower than the window (NYPD upstairs, 360 wide) was pushed to
          * one end and the whole gap went to the other side, switching sides
-         * as the camera scrolled. */
+         * as the camera scrolled (owner, 2026-10-23). */
         if (right - left <= 2.0f * half) {
             shift = (left + right) * 0.5f - 160.0f; /* narrower: equal bars */
         } else if (left > need_left) {

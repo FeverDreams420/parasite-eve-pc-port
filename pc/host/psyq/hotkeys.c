@@ -15,9 +15,11 @@
  * focus. Scan codes, not characters: 53 is the key top-left under Escape on
  * any layout, 43 is Tab (SDL_scancode.h).
  *
- *   F12  snapshot: the next frame's GPU commands (snapshot-NNNNN-gpu.txt), its
- *        picture and video memory (snapshot-NNNNN-frame.ppm / -vram.ppm),
- *        written next to the program, for finding drawing glitches.
+ *   F12  capture for bug hunting, into the folder f12-NNNNN next to the
+ *        program: the next frame's GPU commands, pictures (as shown, 1x,
+ *        HD, the same frame drawn the PS1 way and where HD differs from it),
+ *        video memory and its check, PS1 RAM, scratchpad, sound RAM, a few
+ *        frames after, the recording, and an info file (f12.c).
  *
  *   F5   save: opens the memory-card save screen, as a phone does, wherever
  *        the in-game menu could be opened (host patch of Entity_FrameUpdate).

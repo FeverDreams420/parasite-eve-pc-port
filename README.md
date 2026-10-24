@@ -77,43 +77,52 @@ where she was standing.
 
 ## Building
 
-The build isn't one-click yet, and I haven't tested it from a fresh setup. I've
-only built it on Ubuntu 24.04 (32-bit GCC plus mingw-w64 i686, which also
-builds the Windows exe), and only run the exe on my own PC.
+Linux or WSL (Ubuntu 24.04). The build makes the Windows exe with mingw-w64,
+and can also make a 32-bit Linux binary. It doesn't work on macOS: the port is
+a 32-bit x86 program. The script is new and hasn't had a full run on a clean
+machine yet; if a step fails, the error names the log that says why.
 
 ```sh
+sudo apt-get install git make curl python3-venv cmake ninja-build \
+    binutils-mipsel-linux-gnu gcc-mingw-w64-i686 g++-mingw-w64-i686 \
+    gcc-multilib g++-multilib
 git clone https://github.com/FeverDreams420/parasite-eve-pc-port
 cd parasite-eve-pc-port
-scripts/setup-tree.sh work        # needs git + bash (on Windows: Git Bash or WSL)
-cd work
-cp /path/to/SLUS_006.62 assets/USA/main.exe        # from your Disc 1
-make build                                          # the decomp's own PS1 build
-python3 tools/pc/gen_func_table.py build/pc-tables/func_table_all.c --json build/pc-tables/func_table_all.json
-python3 tools/pc/gen_abs_syms.py build/pc-tables/pe_abs_syms.ld --json build/pc-tables/pe_abs_syms.json
-cmake -S pc -B build/pc-win32 -G Ninja -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_TOOLCHAIN_FILE=$PWD/pc/host/mingw-i686.cmake && cmake --build build/pc-win32
-PE_TARGET=win32 tools/pc/build_all.sh
-build/pc-link-win32/parasite-eve.exe "Parasite Eve (USA) (Disc 1).cue"
+scripts/build.sh "/path/to/Parasite Eve (USA) (Disc 1).cue"
 ```
 
-`setup-tree.sh` downloads the decomp, adds this repo's files on a `native`
-branch and applies the PsyZ patches.
+The result is `work/dist/parasite-eve.exe`. Put it anywhere and start it with
+your Disc 1 `.cue` as the argument, or set `disc=` in `settings.ini`.
 
-Build machine notes (Ubuntu 24.04):
+What `scripts/build.sh` does, in order (logs in `work/build/logs/`):
 
-1. `apt-get install binutils-mipsel-linux-gnu gcc-multilib g++-multilib gcc-mingw-w64-i686`,
-   then link each `mipsel-linux-gnu-*` tool as `mipsel-none-elf-*` in a folder on
-   your PATH (`tools/scripts/setup_linker.sh` needs ftp.gnu.org).
-2. Python: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
-3. Run `tools/scripts/setup_stock_cc1.sh`, `setup_stock_cc281.sh` and `setup_maspsx.sh`.
-4. `export PE_CPP=$PWD/tools/old-gcc/cpp`.
-5. `make build`. Five PSY-Q objects need old GAS from ftp.gnu.org and don't
-   build, which doesn't matter because the PC build replaces PSY-Q.
-6. Linux build of PsyZ: `cmake -S pc -B build/pc-i686 -G Ninja
-   -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-m32 -DCMAKE_CXX_FLAGS=-m32
-   -DCMAKE_EXE_LINKER_FLAGS=-m32`, plus `-DSDL_X11=OFF -DSDL_WAYLAND=OFF
-   -DSDL_UNIX_CONSOLE_BUILD=ON` on a headless machine. Then
-   `tools/pc/build_all.sh` (PE_TARGET=linux is the default).
+1. `scripts/setup-tree.sh work`: downloads the decomp at `f24c682`, adds this
+   repo's files on a `native` branch, gets PsyZ and SDL3 and applies
+   `pc/psyz-patches/` in order.
+2. Python venv with `requirements.txt` and `pycdlib`. Ubuntu's
+   `mipsel-linux-gnu-*` tools are linked as `mipsel-none-elf-*` in
+   `work/.toolbin`.
+3. `tools/scripts/setup_stock_cc1.sh`, `setup_stock_cc281.sh` and
+   `setup_maspsx.sh` (old-gcc 0.17 from GitHub releases, maspsx from GitHub).
+4. `tools/pc/extract_disc.py` copies `SLUS_006.62` to `assets/USA/main.exe` and
+   `PE.IMG` to `disc/extracted/PE.IMG` from your image and checks the exe's
+   SHA-1. Nothing from the disc leaves your machine.
+5. `make build`, the decomp's own PS1 build. Linking `main.elf` fails because
+   five PSY-Q objects need old GAS; that's expected, since the PC build
+   replaces PSY-Q. The script checks that every game object was built.
+6. `tools/pc/gen_func_table.py` and `gen_abs_syms.py`, then
+   `make overlay-build-all` and every `src/overlays/**/*.c` through
+   `tools/scripts/cc.sh`.
+7. PsyZ with CMake (`pc/host/mingw-i686.cmake` for Windows), then
+   `tools/pc/build_all.sh`, then a copy without debug info in `work/dist/`.
+
+Options: `PE_TARGET=linux` or `PE_TARGET=both` for the Linux binary
+(`work/dist/parasite-eve`), `PE_JOBS=N` for the number of jobs, a second
+argument for another work folder. Running the script again continues where it
+stopped. On a headless machine, build the Linux PsyZ with
+`PE_CMAKE_LINUX_FLAGS="-DSDL_X11=OFF -DSDL_WAYLAND=OFF -DSDL_UNIX_CONSOLE_BUILD=ON"`.
+I haven't tried the Linux binary on a desktop, so I don't know which 32-bit
+development packages SDL3 needs there.
 
 If it crashes, the log gets a report and `crash-dump.bin` holds the game's
 memory. That file contains game data, so please don't post it publicly.

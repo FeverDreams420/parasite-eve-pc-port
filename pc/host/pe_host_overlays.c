@@ -6,7 +6,8 @@
  * the read touched are compared with their fingerprint, and a candidate whose
  * whole window now has the right SHA-1 gets its jumps written: from then on
  * a call to one of its retail addresses runs the host function compiled from
- * the same C.
+ * the same C. Disc 2's PE.IMG is the same file at the same place (sector
+ * 1013), so this holds after a disc change too.
  */
 #include "pe_host_overlays.h"
 #include "pe_host_disc.h"
@@ -98,17 +99,18 @@ static void note_recent(const char *what, const char *name, unsigned int a, unsi
     g_recent_n++;
 }
 
-void pe_host_overlays_report(void) {
+void pe_host_overlays_report_to(FILE *f) {
     int i;
     unsigned int k;
     for (i = 0; i < g_windows; i++) {
-        fprintf(stderr, "pe:   load window 0x%08X: %s\n", g_window_vram[i],
+        fprintf(f, "pe:   load window 0x%08X: %s\n", g_window_vram[i],
                 g_current[i] >= 0 ? pe_overlay_table[g_current[i]].name : "(no overlay recognised)");
     }
     for (k = g_recent_n > 8 ? g_recent_n - 8 : 0; k < g_recent_n; k++) {
-        fprintf(stderr, "pe:   recognised: %s\n", g_recent[k % 8]);
+        fprintf(f, "pe:   recognised: %s\n", g_recent[k % 8]);
     }
 }
+void pe_host_overlays_report(void) { pe_host_overlays_report_to(stderr); }
 
 static void install(unsigned int i) {
     const PeHostOverlay *o = &pe_overlay_table[i];

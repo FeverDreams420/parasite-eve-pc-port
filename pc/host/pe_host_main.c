@@ -3,12 +3,20 @@
  *
  * Usage: parasite-eve <disc 1 .cue>            (the program is read from the disc)
  *        parasite-eve <disc .cue> <SLUS_006.62> (use a separate copy of the program)
- * The disc can also be given in $PE_DISC.
+ * The disc can also be given in $PE_DISC, or found without a command line
+ * (psyq/launch.c: settings.ini disc=, next to the exe, or a file window).
+ * Disc 2 is opened from the same name with "Disc 2" (or $PE_DISC2) and
+ * changed in by the game's disc screen.
  */
 #include "pe_host_mem.h"
 #include "pe_host_traps.h"
 #include "pe_host_disc.h"
 #include "pe_host_overlays.h"
+
+/* psyq/launch.c: double-click start, finding Disc 1 */
+void pe_host_launch_setup(void);
+const char *pe_host_launch_find_disc(void);
+void pe_host_launch_error(const char *msg);
 
 #include <signal.h>
 #include <stdio.h>
@@ -283,11 +291,18 @@ int main(int argc, char **argv) {
     sigaction(SIGILL, &sa, NULL);
     sigaction(SIGBUS, &sa, NULL);
 #endif
+    pe_host_launch_setup();
+    if (!disc) {
+        disc = pe_host_launch_find_disc();
+    }
     if (!disc || pe_host_disc_open(disc) != 0) {
-        fprintf(stderr, "pe: no disc image. Usage: parasite-eve \"Parasite Eve (USA) (Disc 1).cue\"\n");
         if (!exe) {
+            pe_host_launch_error(disc ? "Cannot open the disc image (see run-log.txt)."
+                                      : "No disc image. Choose your \"Parasite Eve (USA) (Disc 1).cue\", "
+                                        "or start: parasite-eve \"Parasite Eve (USA) (Disc 1).cue\"");
             return 1;
         }
+        fprintf(stderr, "pe: no disc image\n");
     }
     if (pe_host_map_memory() != 0) {
         return 1;
@@ -300,7 +315,7 @@ int main(int argc, char **argv) {
         unsigned int len;
         unsigned char *img = (unsigned char *)pe_host_disc_load_file("SLUS_006.62", &len);
         if (!img) {
-            fprintf(stderr, "pe: SLUS_006.62 not found on the disc (is this Disc 1 of the USA release?)\n");
+            pe_host_launch_error("SLUS_006.62 not found on the disc (is this Disc 1 of the USA release?)");
             return 1;
         }
         if (check_exe(img, len) != 0 || pe_host_load_exe_image(img, len, &info) != 0) {

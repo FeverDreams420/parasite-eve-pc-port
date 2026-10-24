@@ -1,0 +1,387 @@
+diff --git a/psyz/include/psyz/video.h b/psyz/include/psyz/video.h
+index 19fa454..0fbe557 100644
+--- a/psyz/include/psyz/video.h
++++ b/psyz/include/psyz/video.h
+@@ -407,6 +407,35 @@ void Psyz_VideoSetWidescreenPictureRows(const short* left, const short* right, i
+  */
+ const unsigned short* Psyz_VramShadow(void);
+ 
++/**
++ * @brief Debug VRAM check. Compares the GPU's VRAM with Psyz_VramShadow
++ * wherever only uploads, fills and copies have written since (drawing marks
++ * its scissor rectangle as not known): the 1x VRAM, the 1x copy polygons
++ * sample, and above 1x the HD VRAM, either one texel per pixel as a drawn
++ * area is copied down (full = 0) or every texel (full = 1, reads the whole
++ * HD VRAM). Waits for the GPU. Returns 0, or -1 if it could not read.
++ * Free the result with Psyz_VideoVramCheckFree.
++ */
++#define PSYZ_VCHK_KNOWN 1   /* checked: nothing drawn here since it was written */
++#define PSYZ_VCHK_NATIVE 2  /* 1x VRAM differs */
++#define PSYZ_VCHK_SAMPLE 4  /* 1x copy that polygons sample differs */
++#define PSYZ_VCHK_HD 8      /* HD VRAM differs */
++#define PSYZ_VCHK_SKIP_HD 16 /* upload not yet copied up to HD (movie): HD not checked */
++typedef struct {
++    unsigned char* status;  /* 1024 x 512, PSYZ_VCHK_* bits */
++    unsigned short* native; /* 1x VRAM, 15-bit colour + mask bit */
++    unsigned short* sample; /* 1x copy that polygons sample */
++    unsigned short* hd;     /* HD VRAM per pixel (centre texel, or the first
++                               texel that differs); NULL at 1x */
++    int scale;              /* internal resolution */
++    int full;               /* every HD texel was compared */
++    unsigned n_known, n_native, n_sample, n_hd, n_hd_texels, n_skip_hd;
++    int sample_pending[4];  /* x, y, w, h not yet copied to the sampled copy */
++    int hd_pending[4];      /* x, y, w, h not yet copied up to HD */
++} Psyz_VramCheck;
++int Psyz_VideoVramCheck(Psyz_VramCheck* out, int full);
++void Psyz_VideoVramCheckFree(Psyz_VramCheck* c);
++
+ /** @brief Debug: the next present is also saved (1920x1080 PPM) to path. */
+ void Psyz_VideoPresentTestNext(const char* path);
+ 
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index bafc571..5db4ab7 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -1033,6 +1033,30 @@ static bool DownloadVramRegionAsRGBA8888(int x, int y, int w, int h, u8* out);
+ static u16 vram_shadow[VRAM_H][VRAM_W];
+ static unsigned vram_shadow_gen;
+ 
++// For the VRAM check (Psyz_VideoVramCheck): 1 where the GPU's VRAM should
++// hold exactly what vram_shadow says, because only uploads, fills and copies
++// have written there since; drawing sets its scissor rectangle back to 0.
++// known_drawn is the last rectangle cleared, so repeated batches into the
++// same drawing area cost nothing.
++static u8 vram_known[VRAM_H][VRAM_W];
++static SDL_Rect known_drawn = {0, 0, 0, 0};
++static void KnownSet(int x, int y, int w, int h, u8 v) {
++    const int x0 = CLAMP(x, 0, VRAM_W), y0 = CLAMP(y, 0, VRAM_H);
++    const int x1 = CLAMP(x + w, 0, VRAM_W), y1 = CLAMP(y + h, 0, VRAM_H);
++    for (int j = y0; j < y1 && x1 > x0; j++) {
++        memset(&vram_known[j][x0], v, (size_t)(x1 - x0));
++    }
++    known_drawn = (SDL_Rect){0, 0, 0, 0};
++}
++static void KnownDrawn(SDL_Rect r) {
++    if (r.w <= 0 || r.h <= 0 || (r.x == known_drawn.x && r.y == known_drawn.y &&
++                                 r.w == known_drawn.w && r.h == known_drawn.h)) {
++        return;
++    }
++    KnownSet(r.x, r.y, r.w, r.h, 0);
++    known_drawn = r;
++}
++
+ // Decode the 24-bit display area (w pixels = w*3/2 VRAM halfwords per row)
+ // into disp24_rgb (RGB888) and upload it to disp24_tex as RGBA8888.
+ static bool Build24BitDisplay(int w, int h) {
+@@ -3157,6 +3181,7 @@ static void ShadowFill(int x, int y, int w, int h, u16 c) {
+             vram_shadow[j][i] = c;
+         }
+     }
++    KnownSet(x, y, w, h, 1);
+ }
+ 
+ static void Draw_ClearImage_(PS1_RECT* rect, u_char r, u_char g, u_char b);
+@@ -3247,6 +3272,7 @@ static void Draw_LoadImage_(PS1_RECT* rect, u_long* p) {
+         memcpy(&vram_shadow[rect->y + j][rect->x], (const u16*)p + (size_t)j * rect->w,
+                sizeof(u16) * rect->w);
+     }
++    KnownSet(rect->x, rect->y, rect->w, rect->h, 1);
+     vram_shadow_gen++;
+     if (!sdl3_window && !InitPlatform()) {
+         return;
+@@ -3353,7 +3379,10 @@ static void Draw_MoveImage_(PS1_RECT* rect, unsigned int x, unsigned int y) {
+             const int j = up ? copy_h - 1 - k : k;
+             memmove(&vram_shadow[dst_y + j][dst_x], &vram_shadow[src_y + j][src_x],
+                     sizeof(u16) * copy_w);
++            memmove(&vram_known[dst_y + j][dst_x], &vram_known[src_y + j][src_x],
++                    (size_t)copy_w);
+         }
++        known_drawn = (SDL_Rect){0, 0, 0, 0};
+     }
+     HiresTouch(dst_x, dst_y, copy_w, copy_h);
+     SyncScaledVramToNative(); // MoveImage copies the native VRAM
+@@ -3569,6 +3598,7 @@ static void Draw_FlushBuffer_(void) {
+     if (internal_res <= 1) {
+         MarkVramDirty(scissor_rect);
+     }
++    KnownDrawn(scissor_rect);
+     // drawing into the sharper area changes what is there
+     for (int i = 0; i < PSYZ_HIRES_SLOTS; i++) {
+         if (hires[i].on && scissor_rect.x < hires[i].x + hires[i].w &&
+@@ -3581,3 +3611,204 @@ static void Draw_FlushBuffer_(void) {
+     MarkScaledDirty();
+     Draw_ResetBuffer();
+ }
++
++// VRAM check (debug, Psyz_VideoVramCheck). Reads back the 1x VRAM, the 1x
++// copy that polygons sample (vram_sample) and the HD VRAM, and compares each
++// with vram_shadow wherever vram_known says nothing has drawn since the last
++// upload, fill or copy. Every read waits for the GPU.
++static bool VchkDownload(SDL_GPUTexture* tex, int x, int y, int w, int h, u8* out) {
++    const SDL_GPUTransferBufferCreateInfo info = {
++        .usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,
++        .size = (Uint32)((size_t)w * h * 4),
++    };
++    SDL_GPUTransferBuffer* tb = SDL_CreateGPUTransferBuffer(device, &info);
++    SDL_GPUCommandBuffer* cmd = tb ? AcquireCmd() : NULL;
++    if (!cmd) {
++        if (tb) {
++            SDL_ReleaseGPUTransferBuffer(device, tb);
++        }
++        return false;
++    }
++    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
++    const SDL_GPUTextureRegion region = {
++        .texture = tex, .x = (Uint32)x, .y = (Uint32)y, .w = (Uint32)w, .h = (Uint32)h, .d = 1};
++    const SDL_GPUTextureTransferInfo transfer = {.transfer_buffer = tb};
++    SDL_DownloadFromGPUTexture(copy, &region, &transfer);
++    SDL_EndGPUCopyPass(copy);
++    SubmitCmdAndWait();
++    const u8* map = SDL_MapGPUTransferBuffer(device, tb, false);
++    if (map) {
++        memcpy(out, map, (size_t)w * h * 4);
++        SDL_UnmapGPUTransferBuffer(device, tb);
++    }
++    SDL_ReleaseGPUTransferBuffer(device, tb);
++    return map != NULL;
++}
++
++static bool InRect(SDL_Rect r, int x, int y) {
++    return r.w > 0 && r.h > 0 && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
++}
++
++int Psyz_VideoVramCheck(Psyz_VramCheck* out, int full) {
++    memset(out, 0, sizeof(*out));
++    if (!device || !vram_render || !vram_sample) {
++        return -1;
++    }
++    Draw_FlushBuffer(); // queued drawing first (it marks its area as drawn)
++    const size_t px = (size_t)VRAM_W * VRAM_H;
++    const int n = (internal_res > 1 && scaled_vram_render) ? (int)internal_res : 1;
++    out->status = calloc(px, 1);
++    out->native = malloc(px * 2);
++    out->sample = malloc(px * 2);
++    out->hd = n > 1 ? malloc(px * 2) : NULL;
++    u8* rgba = malloc(px * 4);
++    if (!out->status || !out->native || !out->sample || (n > 1 && !out->hd) || !rgba) {
++        free(rgba);
++        Psyz_VideoVramCheckFree(out);
++        return -1;
++    }
++    out->scale = n;
++    out->full = full && n > 1;
++    const SDL_Rect sample_pending = vram_dirty; // copied to vram_sample by the next textured batch
++    const SDL_Rect hd_wait = hd_pending;        // uploads not yet copied up (movie)
++    bool ok = VchkDownload(vram_render, 0, 0, VRAM_W, VRAM_H, rgba);
++    if (ok) {
++        ConvertRgba8888ToRgb5551(rgba, out->native, px);
++        ok = VchkDownload(vram_sample, 0, 0, VRAM_W, VRAM_H, rgba);
++    }
++    if (ok) {
++        ConvertRgba8888ToRgb5551(rgba, out->sample, px);
++    }
++    for (int y = 0; ok && y < VRAM_H; y++) {
++        for (int x = 0; x < VRAM_W; x++) {
++            const size_t i = (size_t)y * VRAM_W + x;
++            if (!vram_known[y][x]) {
++                continue;
++            }
++            const u16 want = vram_shadow[y][x];
++            u8 st = PSYZ_VCHK_KNOWN;
++            out->n_known++;
++            if (out->native[i] != want) {
++                st |= PSYZ_VCHK_NATIVE;
++                out->n_native++;
++            }
++            if (!InRect(sample_pending, x, y) && out->sample[i] != want) {
++                st |= PSYZ_VCHK_SAMPLE;
++                out->n_sample++;
++            }
++            if (n > 1 && InRect(hd_wait, x, y)) {
++                st |= PSYZ_VCHK_SKIP_HD;
++                out->n_skip_hd++;
++            }
++            out->status[i] = st;
++        }
++    }
++    if (ok && n > 1 && !out->full) {
++        // one texel per pixel, picked by the same nearest blit that copies a
++        // drawn area down (SyncScaledVramToNative)
++        static SDL_GPUTexture* vchk_small;
++        if (!vchk_small) {
++            const SDL_GPUTextureCreateInfo info = {
++                .type = SDL_GPU_TEXTURETYPE_2D,
++                .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
++                .usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
++                .width = VRAM_W,
++                .height = VRAM_H,
++                .layer_count_or_depth = 1,
++                .num_levels = 1,
++            };
++            vchk_small = SDL_CreateGPUTexture(device, &info);
++        }
++        SDL_GPUCommandBuffer* cmd = vchk_small ? AcquireCmd() : NULL;
++        ok = cmd != NULL;
++        if (ok) {
++            const SDL_GPUBlitInfo blit = {
++                .source = {.texture = scaled_vram_render,
++                           .w = (Uint32)(VRAM_W * n),
++                           .h = (Uint32)(VRAM_H * n)},
++                .destination = {.texture = vchk_small, .w = VRAM_W, .h = VRAM_H},
++                .load_op = SDL_GPU_LOADOP_DONT_CARE,
++                .filter = SDL_GPU_FILTER_NEAREST,
++            };
++            SDL_BlitGPUTexture(cmd, &blit);
++            ok = VchkDownload(vchk_small, 0, 0, VRAM_W, VRAM_H, rgba);
++        }
++        if (ok) {
++            ConvertRgba8888ToRgb5551(rgba, out->hd, px);
++            for (size_t i = 0; i < px; i++) {
++                const u8 st = out->status[i];
++                if ((st & PSYZ_VCHK_KNOWN) && !(st & PSYZ_VCHK_SKIP_HD) &&
++                    out->hd[i] != ((const u16*)vram_shadow)[i]) {
++                    out->status[i] |= PSYZ_VCHK_HD;
++                    out->n_hd++;
++                }
++            }
++        }
++    } else if (ok && n > 1) {
++        // every HD texel: each pixel's n x n block must all be the shadow's
++        // colour. Read in strips of 16 VRAM rows (4 MiB at 8x).
++        const int rows = 16, sw = VRAM_W * n;
++        u8* strip = malloc((size_t)sw * rows * n * 4);
++        ok = strip != NULL;
++        for (int y0 = 0; ok && y0 < VRAM_H; y0 += rows) {
++            ok = VchkDownload(scaled_vram_render, 0, y0 * n, sw, rows * n, strip);
++            for (int y = y0; ok && y < y0 + rows; y++) {
++                for (int x = 0; x < VRAM_W; x++) {
++                    const size_t i = (size_t)y * VRAM_W + x;
++                    const u16 want = vram_shadow[y][x];
++                    const u8* mid = strip + (((size_t)(y - y0) * n + n / 2) * sw + (size_t)x * n + n / 2) * 4;
++                    u16 got;
++                    ConvertRgba8888ToRgb5551(mid, &got, 1);
++                    out->hd[i] = got;
++                    const u8 st = out->status[i];
++                    if (!(st & PSYZ_VCHK_KNOWN) || (st & PSYZ_VCHK_SKIP_HD)) {
++                        continue;
++                    }
++                    int bad = 0;
++                    for (int ty = 0; ty < n; ty++) {
++                        const u8* t = strip + (((size_t)(y - y0) * n + ty) * sw + (size_t)x * n) * 4;
++                        for (int tx = 0; tx < n; tx++, t += 4) {
++                            u16 v;
++                            ConvertRgba8888ToRgb5551(t, &v, 1);
++                            if (v != want) {
++                                if (!bad) {
++                                    out->hd[i] = v; // the first texel that differs
++                                }
++                                bad++;
++                            }
++                        }
++                    }
++                    if (bad) {
++                        out->status[i] |= PSYZ_VCHK_HD;
++                        out->n_hd++;
++                        out->n_hd_texels += (unsigned)bad;
++                    }
++                }
++            }
++        }
++        free(strip);
++    }
++    free(rgba);
++    if (!ok) {
++        Psyz_VideoVramCheckFree(out);
++        return -1;
++    }
++    out->sample_pending[0] = sample_pending.x;
++    out->sample_pending[1] = sample_pending.y;
++    out->sample_pending[2] = sample_pending.w;
++    out->sample_pending[3] = sample_pending.h;
++    out->hd_pending[0] = hd_wait.x;
++    out->hd_pending[1] = hd_wait.y;
++    out->hd_pending[2] = hd_wait.w;
++    out->hd_pending[3] = hd_wait.h;
++    return 0;
++}
++
++void Psyz_VideoVramCheckFree(Psyz_VramCheck* c) {
++    free(c->status);
++    free(c->native);
++    free(c->sample);
++    free(c->hd);
++    c->status = NULL;
++    c->native = c->sample = c->hd = NULL;
++}
+diff --git a/psyz/tests/test_libgpu.c b/psyz/tests/test_libgpu.c
+index 3500c10..4b40119 100644
+--- a/psyz/tests/test_libgpu.c
++++ b/psyz/tests/test_libgpu.c
+@@ -642,6 +642,67 @@ ZTEST(gpu, move_image_internal_res) {
+     ASSERT_FRAME("move_image", 0, 1.0f);
+ }
+ 
++#ifndef __psx__
++#ifndef __PSP__
++// Psyz_VideoVramCheck: uploads, fills and copies outside the drawing area
++// read back as written at 1x and 2x; the drawn area is not checked.
++static void VramCheckScene(void) {
++    u_short tpage, clut;
++    u_short pattern[32 * 16];
++    RECT up = {640, 256, 32, 16};
++    RECT fill = {704, 256, 16, 16};
++    RECT mv = {640, 256, 16, 16};
++    if (LoadTim(img_4bpp, &tpage, &clut)) {
++        return;
++    }
++    for (int i = 0; i < 32 * 16; i++) {
++        pattern[i] = (u_short)(i * 0x1235);
++    }
++    LoadImage(&up, (u_long*)pattern);
++    ClearImage(&fill, 200, 100, 50);
++    MoveImage(&mv, 640, 300);
++    SetPolyFT4(&cdb->ft4[0]);
++    setXYWH(&cdb->ft4[0], 16, 16, 64, 64);
++    setRGB0(&cdb->ft4[0], 128, 128, 128);
++    setUVWH(&cdb->ft4[0], 0, 0, 64, 64);
++    setSemiTrans(&cdb->ft4[0], 0);
++    cdb->ft4[0].tpage = tpage;
++    cdb->ft4[0].clut = clut;
++    ClearOTag(cdb->ot, OTSIZE);
++    AddPrim(cdb->ot, &db[0].ft4[0]);
++    DrawOTag(cdb->ot);
++    DrawSync(0);
++    VSync(0);
++}
++
++static void ExpectVramCheckClean(int full) {
++    Psyz_VramCheck c;
++    zassert_s32_eq(0, Psyz_VideoVramCheck(&c, full));
++    zexpect_u32_eq(0, c.n_native);
++    zexpect_u32_eq(0, c.n_sample);
++    zexpect_u32_eq(0, c.n_hd);
++    zexpect_u32_gt(0, c.n_known);
++    // the upload, the fill and the copy are checked; the drawn picture is not
++    zexpect_u32_eq(PSYZ_VCHK_KNOWN, c.status[256 * 1024 + 640] & PSYZ_VCHK_KNOWN);
++    zexpect_u32_eq(PSYZ_VCHK_KNOWN, c.status[260 * 1024 + 710] & PSYZ_VCHK_KNOWN);
++    zexpect_u32_eq(PSYZ_VCHK_KNOWN, c.status[300 * 1024 + 640] & PSYZ_VCHK_KNOWN);
++    zexpect_u32_eq(0, c.status[32 * 1024 + 32] & PSYZ_VCHK_KNOWN);
++    Psyz_VideoVramCheckFree(&c);
++}
++
++ZTEST(gpu, vram_check) {
++    zskip_targets("psp;ps1");
++    VramCheckScene();
++    ExpectVramCheckClean(0);
++    zassert_s32_eq(0, Psyz_VideoSetInternalResolution(2));
++    VramCheckScene();
++    ExpectVramCheckClean(0);
++    ExpectVramCheckClean(1);
++    zassert_s32_eq(0, Psyz_VideoSetInternalResolution(1));
++}
++#endif
++#endif
++
+ ZTEST(gpu, disp_mask_preserves_vram) {
+     u_short pattern[16 * 16];
+     u_short readback[16 * 16];

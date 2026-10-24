@@ -1,0 +1,140 @@
+diff --git a/psyz/include/psyz/video.h b/psyz/include/psyz/video.h
+index b8bb75e..19fa454 100644
+--- a/psyz/include/psyz/video.h
++++ b/psyz/include/psyz/video.h
+@@ -417,6 +417,14 @@ void Psyz_VideoPresentTestNext(const char* path);
+  * Returns 0 if already recording or the file cannot be created.
+  */
+ int Psyz_VideoRecordStart(const char* path, int w, int h);
++/**
++ * @brief Debug recorder into the caller: as Psyz_VideoRecordStart, but each
++ * recorded present is handed to fn (present number, tag, ms since the start,
++ * w*h RGB, valid only during the call) instead of a file, so the caller can
++ * keep the last seconds in memory. Psyz_VideoRecordStop ends it.
++ */
++typedef void (*Psyz_RecordSinkFn)(unsigned present, unsigned tag, float t_ms, const unsigned char* rgb);
++int Psyz_VideoRecordStartSink(Psyz_RecordSinkFn fn, int w, int h);
+ /** @brief The tag stored with the following recorded presents (game frame). */
+ void Psyz_VideoRecordTag(unsigned frame);
+ /** @brief Ends the recording: waits for the last read-backs, closes the file. */
+diff --git a/psyz/src/platform/sdl3_gpu.c b/psyz/src/platform/sdl3_gpu.c
+index 1c9e79a..bafc571 100644
+--- a/psyz/src/platform/sdl3_gpu.c
++++ b/psyz/src/platform/sdl3_gpu.c
+@@ -272,10 +272,11 @@ static unsigned frame_fence_idx = 0;
+ // Recorder (Psyz_VideoRecordStart): every present is also drawn, small, into
+ // rec_tex and read back without stalling (a few frames late, by fence) into a
+ // file: per frame a 16-byte header {present, game frame, ms since start, 0}
+-// then w*h RGB.
++// then w*h RGB. Psyz_VideoRecordStartSink hands each one to the caller instead.
+ #define REC_SLOTS 4
+ static struct {
+     FILE* f;
++    Psyz_RecordSinkFn sink;
+     int w, h;
+     unsigned present, tag;
+     Uint64 t0;
+@@ -303,19 +304,23 @@ static void RecFlushSlot(int i, bool wait) {
+     SDL_ReleaseGPUFence(device, rec.slot[i].fence);
+     rec.slot[i].fence = NULL;
+     const unsigned char* px = SDL_MapGPUTransferBuffer(device, rec.slot[i].tb, false);
+-    if (px && rec.f) {
+-        const Uint32 hdr[4] = {rec.slot[i].present, rec.slot[i].tag, 0, 0};
+-        float t = rec.slot[i].t_ms;
+-        fwrite(hdr, 4, 1, rec.f);
+-        fwrite(&hdr[1], 4, 1, rec.f);
+-        fwrite(&t, 4, 1, rec.f);
+-        fwrite(&hdr[3], 4, 1, rec.f);
++    if (px && (rec.f || rec.sink)) {
+         for (int k = 0; k < rec.w * rec.h; k++) {
+             rec.row[k * 3 + 0] = px[k * 4 + 0];
+             rec.row[k * 3 + 1] = px[k * 4 + 1];
+             rec.row[k * 3 + 2] = px[k * 4 + 2];
+         }
+-        fwrite(rec.row, 3, (size_t)rec.w * rec.h, rec.f);
++        if (rec.sink) {
++            rec.sink(rec.slot[i].present, rec.slot[i].tag, rec.slot[i].t_ms, rec.row);
++        } else {
++            const Uint32 hdr[4] = {rec.slot[i].present, rec.slot[i].tag, 0, 0};
++            float t = rec.slot[i].t_ms;
++            fwrite(hdr, 4, 1, rec.f);
++            fwrite(&hdr[1], 4, 1, rec.f);
++            fwrite(&t, 4, 1, rec.f);
++            fwrite(&hdr[3], 4, 1, rec.f);
++            fwrite(rec.row, 3, (size_t)rec.w * rec.h, rec.f);
++        }
+     }
+     if (px) {
+         SDL_UnmapGPUTransferBuffer(device, rec.slot[i].tb);
+@@ -1185,7 +1190,7 @@ static void PlatformBackend_Present_(void) {
+     }
+     // the recorder's target this frame (swapchain format, or RGBA8 offscreen)
+     SDL_GPUTexture* rec_target = NULL;
+-    if (rec.f && !test_tex) {
++    if ((rec.f || rec.sink) && !test_tex) {
+         if (!rec.tex) {
+             rec.fmt = swapchain_ok ? SDL_GetGPUSwapchainTextureFormat(device, sdl3_window)
+                                    : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+@@ -3069,14 +3074,7 @@ void Psyz_VideoSetSmoothShadows(int on) { smooth_shadows = on != 0; }
+ 
+ int Psyz_VideoGetRgb24(void) { return disp_rgb24 ? 1 : 0; }
+ 
+-int Psyz_VideoRecordStart(const char* path, int w, int h) {
+-    if (rec.f || w <= 0 || h <= 0) {
+-        return 0;
+-    }
+-    rec.f = fopen(path, "wb");
+-    if (!rec.f) {
+-        return 0;
+-    }
++static void RecSetSize(int w, int h) {
+     if (rec.tex && (rec.w != w || rec.h != h)) {
+         if (rec.rgba != rec.tex) {
+             SDL_ReleaseGPUTexture(device, rec.rgba);
+@@ -3093,21 +3091,44 @@ int Psyz_VideoRecordStart(const char* path, int w, int h) {
+     rec.row = realloc(rec.row, (size_t)w * h * 3);
+     rec.present = 0;
+     rec.t0 = SDL_GetPerformanceCounter();
++}
++
++int Psyz_VideoRecordStart(const char* path, int w, int h) {
++    if (rec.f || rec.sink || w <= 0 || h <= 0) {
++        return 0;
++    }
++    rec.f = fopen(path, "wb");
++    if (!rec.f) {
++        return 0;
++    }
++    RecSetSize(w, h);
++    return 1;
++}
++
++int Psyz_VideoRecordStartSink(Psyz_RecordSinkFn fn, int w, int h) {
++    if (rec.f || rec.sink || !fn || w <= 0 || h <= 0) {
++        return 0;
++    }
++    rec.sink = fn;
++    RecSetSize(w, h);
+     return 1;
+ }
+ 
+ void Psyz_VideoRecordTag(unsigned frame) { rec.tag = frame; }
+ 
+ void Psyz_VideoRecordStop(void) {
+-    if (!rec.f) {
++    if (!rec.f && !rec.sink) {
+         return;
+     }
+     SubmitFrame(); // anything still in the current command buffer
+     for (int k = 0; k < REC_SLOTS; k++) {
+         RecFlushSlot((rec.next + k) % REC_SLOTS, true);
+     }
+-    fclose(rec.f);
++    if (rec.f) {
++        fclose(rec.f);
++    }
+     rec.f = NULL;
++    rec.sink = NULL;
+ }
+ 
+ 
