@@ -87,17 +87,13 @@ for rf in "$OUT"/ovl/rename_*.txt; do
     done < "$OUT/ovl/objs_$ov.txt"
 done
 
-# Code the decomp keeps as data words, translated from your executable.
-python3 tools/pc/gen_data_code.py assets/USA/main.exe "$OUT/data_code.c" >/dev/null
-"$CC" $CFLAGS -Ipc/host -include pc/host/pe_host_prelude.h -c "$OUT/data_code.c" -o "$OUT/rt/data_code.o"
-
-for f in pc/host/pe_host_mem.c pc/host/pe_host_main.c pc/host/pe_host_disc.c pc/host/pe_host_sha1.c pc/host/pe_host_gte.c pc/host/pe_host_overlays.c pc/host/pe_host_lowmem.c "$OUT/ovl/overlay_table.c" "$OUT/func_table.c" "$OUT/psyq_traps.c" "$OUT/psyq_stubs.c"; do
+for f in pc/host/pe_host_mem.c pc/host/pe_host_main.c pc/host/pe_host_disc.c pc/host/pe_host_sha1.c pc/host/pe_host_gte.c pc/host/pe_host_overlays.c pc/host/pe_host_lowmem.c pc/host/pe_host_datacode.c "$OUT/ovl/overlay_table.c" "$OUT/func_table.c" "$OUT/psyq_traps.c" "$OUT/psyq_stubs.c"; do
     "$CC" $CFLAGS -Ipc/host -c "$f" -o "$OUT/rt/$(basename "$f" .c).o"
 done
 
 "$CC" $LDFLAGS -o "$EXE" \
     $(cat "$OUT/link_objs.txt") $(cat "$OUT/shim_objs.txt") "$OUT"/rt/pe_host_*.o \
-    "$OUT/rt/func_table.o" "$OUT/rt/data_code.o" "$OUT/rt/psyq_traps.o" "$OUT/rt/psyq_stubs.o" \
+    "$OUT/rt/func_table.o" "$OUT/rt/psyq_traps.o" "$OUT/rt/psyq_stubs.o" \
     "$OUT/rt/overlay_table.o" $(cat "$OUT/ovl_link_objs.txt") \
     "$OUT/abs_syms.ld" "$OUT/ovl/overlay_abs.ld" \
     "$PSYZ/psyz/libpsyz.a" "$PSYZ/psyz/sdl/libSDL3.a" $LIBS

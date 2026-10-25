@@ -570,6 +570,21 @@ int pe_psyq_VSync(int mode) {
                         mdec_n, mdec_ms, pn[0], pm[0], pn[1], pm[1], pn[2], pm[2], pn[3], pm[3], pn[4], pm[4],
                         pn[5], pm[5], pn[6], pm[6], pn[7], pm[7]);
             }
+            {
+                /* the routines the decomp keeps as data (pe_host_datacode.c) */
+                void pe_host_datacode_take(unsigned *calls, unsigned long long *insns, double *total_ms,
+                                           double *worst_ms);
+                unsigned dc_calls;
+                unsigned long long dc_insns;
+                double dc_ms, dc_worst;
+                pe_host_datacode_take(&dc_calls, &dc_insns, &dc_ms, &dc_worst);
+                if (dc_calls) {
+                    fprintf(stderr,
+                            "pe: data code: %u calls, %llu instructions in the last 300 frames, "
+                            "%.3f ms in all, longest call %.3f ms\n",
+                            dc_calls, dc_insns, dc_ms, dc_worst);
+                }
+            }
             frames = late = worst = 0;
             g_game_s = g_wait_s = 0.0;
         }

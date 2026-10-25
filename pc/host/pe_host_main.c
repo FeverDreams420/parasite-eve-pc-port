@@ -327,6 +327,10 @@ int main(int argc, char **argv) {
     fprintf(stderr, "pe: loaded %s: 0x%08X..0x%08X, entry 0x%08X\n", exe, info.t_addr,
             info.t_addr + info.t_size, info.pc);
     install_traps();
+    if (pe_host_datacode_init() != 0) {
+        pe_host_launch_error("This SLUS_006.62 does not match the port (see run-log.txt).");
+        return 1;
+    }
     if (pe_host_install_jumps(pe_main_func_table, pe_main_func_count) != 0 ||
         pe_host_install_jumps(pe_data_code_table, pe_data_code_count) != 0) {
         return 1;

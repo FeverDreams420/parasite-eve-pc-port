@@ -12,6 +12,10 @@ writes a table of entry points whose jumps the host installs at start-up.
 Entry points: every `dlabel func_` inside the range, plus every jal target
 inside it.
 
+Not part of the build: the program runs these routines from the loaded
+executable (pc/host/pe_host_datacode.c). The C made here is the reference
+pc/tests/datacode_test.c checks that interpreter against.
+
   gen_data_code.py EXE OUT.c [--objdump mipsel-none-elf-objdump]
 """
 import argparse
