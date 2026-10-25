@@ -1,12 +1,19 @@
-# Native port for Parasite Eve PC *playable* 
-disc 2 has been tested and you can now play the full game to the end with end game content. no need to build just download and point to your disc files.
-this port has an added HD option but you can switch back to the Original anytime you want. Nothing is emulated. Fully Native x86 program.
+# Parasite Eve native PC port (playable)
 
-##Features Added
+Disc 2 has been tested: you can play the whole game to the end, including the
+end-game content. No need to build anything: just download the release and
+point it to your disc files.
 
--Widescreen support, 8x foreground models.
--Save option in the triangle menu during normal play (cant save in battles)
--Turn back to normal graphics anytime you want by pressing F7 or the added graphical option in the User Preference Triangle menu.
+This port adds an HD option, and you can switch back to the original graphics
+whenever you want. Nothing is emulated: it is a fully native x86 program.
+
+## Features added
+
+- Widescreen support and 8x foreground models.
+- Save option in the Triangle menu during normal play (you can't save in
+  battles).
+- Switch back to the original graphics at any time with F7, or with the new
+  Graphics option in the Triangle menu's User Preferences.
 
 ## What you need
 
@@ -18,11 +25,12 @@ this port has an added HD option but you can switch back to the Original anytime
 
 ## Playing on Windows
 
-1. Download `parasite-eve-pc-port-v0.2-windows.zip` from
+1. Download `parasite-eve-pc-port-v0.5-windows.zip` from
    [Releases](https://github.com/FeverDreams420/parasite-eve-pc-port/releases)
    and unzip it.
 2. Double-click `parasite-eve.exe`. The first time, it asks for your Disc 1
-   `.cue` (or finds it in the same folder) and remembers it in `settings.ini`.
+   `.cue` (or finds it in the same folder), and for Disc 2 if it isn't next
+   to Disc 1. Both are remembered in `settings.ini`.
 
 Saves go to `memcards` next to the exe. Nothing else needs to be installed
 (Windows 10 or 11).
@@ -41,12 +49,13 @@ Xbox-style controllers work.
 
 | Key | What it does |
 | --- | --- |
-| F5 | save screen |
-| ` / ~ | skip movie |
-| Tab (hold) | fast forward |
-| F4 | fullscreen on / off |
-| Shift+F4 | borderless window (fallback if fullscreen stutters) |
-| F12 | snapshot for bug reports |
+| F5 | Open the save screen |
+| ` / ~ | Skip the movie |
+| Tab (hold) | Fast forward |
+| F4 | Fullscreen on/off |
+| Shift+F4 | Borderless window (if fullscreen stutters) |
+| F7 | Switch between HD and Original graphics |
+| F12 | Snapshot for bug reports |
 
 ## Building it yourself (optional)
 
@@ -94,7 +103,8 @@ scripts/build.sh "/path/to/Parasite Eve (USA) (Disc 1).cue"
 ```
 
 Output: `work/dist/parasite-eve.exe`. Start it with your Disc 1 `.cue` as the
-argument, or set `disc=` in `settings.ini`. Logs are in `work/build/logs/`.
+argument, or set `disc=` in `settings.ini`. Disc 2 is found next to Disc 1, or
+set `disc2=`. Logs are in `work/build/logs/`.
 
 ## Credits
 
