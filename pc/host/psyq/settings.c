@@ -29,6 +29,10 @@
  *   disc=C:\path\Parasite Eve (USA) (Disc 1).cue
  *                     Disc 1 for a start without a command line (launch.c
  *                     writes it when you pick the disc).
+ *   disc2=C:\path\Parasite Eve (USA) (Disc 2).cue
+ *                     Disc 2 when it is not next to Disc 1 under the same
+ *                     name ("Disc 2" in place of "Disc 1"). "none": no
+ *                     Disc 2, so launch.c does not ask for it again.
  *
  * Graphics in the game's Set User Preferences screen switches between HD
  * (8x) and Original (1x) (host patch of Menu_CreateMainMenuView.c). F7
@@ -50,6 +54,7 @@ static unsigned g_smooth_pictures = 0;
 static unsigned g_soft_borders = 0;
 static unsigned g_smooth_shadows = 1;
 static char g_disc[1024];
+static char g_disc2[1024];
 void pe_host_font_set_scale(unsigned scale);
 
 static void settings_write(void) {
@@ -73,6 +78,10 @@ static void settings_write(void) {
     if (g_disc[0]) {
         fprintf(f, "# disc: your Disc 1 image (Disc 2 is found next to it)\n"
                    "disc=%s\n", g_disc);
+    }
+    if (g_disc2[0]) {
+        fprintf(f, "# disc2: your Disc 2 image when it is not next to Disc 1 (none = don't ask)\n"
+                   "disc2=%s\n", g_disc2);
     }
     fclose(f);
 }
@@ -156,6 +165,16 @@ void pe_host_movie_check(void) {
  * slide, widescreen.c), 0 when 4:3. */
 int pe_host_widescreen_margin(void) { return Psyz_VideoGetWidescreen() ? 54 : 0; }
 
+/* A path from settings.ini, without the line end. */
+static void read_path(char *dst, size_t size, const char *value) {
+    size_t n;
+    snprintf(dst, size, "%s", value);
+    n = strlen(dst);
+    while (n && (dst[n - 1] == '\n' || dst[n - 1] == '\r' || dst[n - 1] == ' ')) {
+        dst[--n] = 0;
+    }
+}
+
 /* Read settings.ini into the values above (nothing applied yet). */
 static void settings_parse(void) {
     char line[1200];
@@ -169,12 +188,9 @@ static void settings_parse(void) {
             continue;
         }
         if (strncmp(line, "disc=", 5) == 0) {
-            size_t n;
-            snprintf(g_disc, sizeof(g_disc), "%s", line + 5);
-            n = strlen(g_disc);
-            while (n && (g_disc[n - 1] == '\n' || g_disc[n - 1] == '\r' || g_disc[n - 1] == ' ')) {
-                g_disc[--n] = 0;
-            }
+            read_path(g_disc, sizeof(g_disc), line + 5);
+        } else if (strncmp(line, "disc2=", 6) == 0) {
+            read_path(g_disc2, sizeof(g_disc2), line + 6);
         } else if (sscanf(line, " soft_borders = %u", &v) == 1) {
             g_soft_borders = v != 0;
         } else if (sscanf(line, " smooth_shadows = %u", &v) == 1) {
@@ -208,6 +224,18 @@ const char *pe_host_settings_disc(void) {
 void pe_host_settings_set_disc(const char *path) {
     settings_parse();
     snprintf(g_disc, sizeof(g_disc), "%s", path);
+    settings_write();
+}
+
+/* Disc 2 saved in settings.ini ("" when none, "none" when there is none). */
+const char *pe_host_settings_disc2(void) {
+    settings_parse();
+    return g_disc2;
+}
+
+void pe_host_settings_set_disc2(const char *path) {
+    settings_parse();
+    snprintf(g_disc2, sizeof(g_disc2), "%s", path);
     settings_write();
 }
 

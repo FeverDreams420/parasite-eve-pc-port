@@ -1,7 +1,7 @@
 @echo off
 rem Builds parasite-eve.exe on Windows through WSL (Ubuntu).
-rem Double-click it, or drop your Disc 1 .cue onto it. The exe is written
-rem next to this file. Needs WSL with Ubuntu ("wsl --install" once), and Git
+rem Double-click it, or drop your Disc 1 .cue (and Disc 2 .cue) onto it. The
+rem exe and a settings.ini naming both discs are written next to this file. Needs WSL with Ubuntu ("wsl --install" once), and Git
 rem and Python on Windows (offered for install with winget if missing):
 rem downloads are made on Windows into the downloads folder next to this
 rem file, as WSL networking can be much slower.
@@ -58,6 +58,34 @@ echo Not found: "%DISC%"
 pause & exit /b 1
 :disc_ok
 
+rem Disc 2 is only read while playing (the game's disc change), not for the
+rem build. Second argument, else Disc 1's name with "Disc 2", else asked.
+set "DISC2=%~2"
+if not defined DISC2 goto disc2_guess
+if "%DISC:Disc 2=%"=="%DISC%" goto disc2_check
+rem Both dropped at once, Disc 2 first (Explorer picks the order).
+set "DISC2=%DISC%"
+set "DISC=%~2"
+if exist "%DISC%" goto disc2_check
+echo Not found: "%DISC%"
+pause & exit /b 1
+:disc2_guess
+set "DISC2=%DISC:Disc 1=Disc 2%"
+if /i "%DISC2%"=="%DISC%" goto ask_disc2
+if exist "%DISC2%" goto disc2_found
+:ask_disc2
+set "DISC2="
+set /p "DISC2=Path to your Parasite Eve Disc 2 .cue (drag the file here, or press Enter if you have none): "
+if not defined DISC2 goto disc2_ok
+:disc2_check
+set "DISC2=%DISC2:"=%"
+if exist "%DISC2%" goto disc2_found
+echo Not found: "%DISC2%"
+pause & exit /b 1
+:disc2_found
+echo Disc 2: "%DISC2%"
+:disc2_ok
+
 echo.
 echo == Checking Ubuntu packages (as root inside WSL)
 %WSL% --cd "%HERE%" -u root -e bash scripts/build-wsl.sh prepare "%DL%" || (
@@ -86,9 +114,16 @@ echo == Build (the first one takes a while; logs in ~/parasite-eve-build/build/l
     pause & exit /b 1
 )
 
+rem The discs go into settings.ini next to the exe, so a double click finds them.
+%PY% "%HERE%\scripts\write-settings.py" "%HERE%\settings.ini" "%DISC%" "%DISC2%" || (
+    echo Writing settings.ini failed.
+    pause & exit /b 1
+)
+
 echo.
 echo Done: "%HERE%\parasite-eve.exe"
-echo Put it in a folder with your Disc 1 .cue/.bin, or set disc= in settings.ini.
+echo Your discs are saved in settings.ini next to it (disc= and disc2=).
+echo Start parasite-eve.exe from this folder, or copy settings.ini along with it.
 pause
 exit /b 0
 

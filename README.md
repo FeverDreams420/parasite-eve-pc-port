@@ -11,8 +11,10 @@ this port has an added HD option but you can switch back to the Original anytime
 ## What you need
 
 - Your own Parasite Eve (USA) **Disc 1** image (`.cue` + `.bin`). Nothing from
-  the game is included or downloaded. For the second half of the game, keep
-  Disc 2 next to it with "Disc 2" in its name.
+  the game is included or downloaded. For the second half of the game you
+  also need **Disc 2**: keep it next to Disc 1 with "Disc 2" in its name, or
+  pick it when the game asks (saved as `disc2=` in `settings.ini`). The game
+  changes to it on its own disc screen.
 
 ## Playing on Windows
 
@@ -65,10 +67,12 @@ On Linux you need none of the Windows items; see
 
 1. Install everything above.
 2. Download this repository (`git clone` or Code > Download ZIP) and unzip it.
-3. Drop your Disc 1 `.cue` onto `build-windows.bat` (or double-click it and
-   paste the path).
-4. When it says `Done`, put `parasite-eve.exe` in a folder with your Disc 1
-   `.cue`/`.bin` (or set `disc=` in `settings.ini`) and double-click it.
+3. Drop your Disc 1 `.cue` (and Disc 2 `.cue`) onto `build-windows.bat`, or
+   double-click it and paste the paths. Disc 2 next to Disc 1 is found on
+   its own; press Enter at the Disc 2 question if you don't have it.
+4. When it says `Done`, double-click `parasite-eve.exe` in the same folder.
+   The `settings.ini` written next to it names both discs (`disc=`,
+   `disc2=`); copy it along if you move the exe.
 
 It downloads the source code, compilers and packages on Windows into a
 `downloads` folder next to the `.bat` (WSL's own connection can be much

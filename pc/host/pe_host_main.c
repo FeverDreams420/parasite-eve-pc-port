@@ -5,8 +5,9 @@
  *        parasite-eve <disc .cue> <SLUS_006.62> (use a separate copy of the program)
  * The disc can also be given in $PE_DISC, or found without a command line
  * (psyq/launch.c: settings.ini disc=, next to the exe, or a file window).
- * Disc 2 is opened from the same name with "Disc 2" (or $PE_DISC2) and
- * changed in by the game's disc screen.
+ * Disc 2 is opened from the same name with "Disc 2" (or $PE_DISC2), else
+ * from settings.ini disc2= or a file window (launch.c), and changed in by
+ * the game's disc screen.
  */
 #include "pe_host_mem.h"
 #include "pe_host_traps.h"
@@ -16,6 +17,7 @@
 /* psyq/launch.c: double-click start, finding Disc 1 */
 void pe_host_launch_setup(void);
 const char *pe_host_launch_find_disc(void);
+const char *pe_host_launch_find_disc2(void);
 void pe_host_launch_error(const char *msg);
 
 #include <signal.h>
@@ -303,6 +305,11 @@ int main(int argc, char **argv) {
             return 1;
         }
         fprintf(stderr, "pe: no disc image\n");
+    } else if (!pe_host_disc_available(1)) {
+        const char *disc2 = pe_host_launch_find_disc2();
+        if (disc2) {
+            pe_host_disc_open_disc2(disc2);
+        }
     }
     if (pe_host_map_memory() != 0) {
         return 1;

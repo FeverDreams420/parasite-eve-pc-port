@@ -1,7 +1,8 @@
 /* Disc image access: a CUE sheet naming one MODE2/2352 BIN (the usual
  * Redump layout), or a BIN directly. A BIN can also be given as numbered
  * pieces "<name>.part0", "<name>.part1", ... (a split copy). Disc 2 is
- * opened too when it is found next to Disc 1 (open_disc2). */
+ * opened too when it is found next to Disc 1 (open_disc2), or from
+ * another path (pe_host_disc_open_disc2: settings.ini disc2=). */
 #include "pe_host_disc.h"
 
 #include <stdio.h>
@@ -124,15 +125,25 @@ static void open_disc2(const char *disc1) {
         at = strstr(disc1, "disc 1");
     }
     if (!at) {
-        fprintf(stderr, "pe: no Disc 2 image (name has no \"Disc 1\" to swap; set PE_DISC2)\n");
+        fprintf(stderr, "pe: no Disc 2 next to Disc 1 (name has no \"Disc 1\" to swap)\n");
         return;
     }
     snprintf(name, sizeof(name), "%.*s%.4s 2%s", (int)(at - disc1), disc1, at, at + 6);
     if (open_image(&g_disc[1], name, 1) == 0) {
         fprintf(stderr, "pe: Disc 2: %s\n", name);
     } else {
-        fprintf(stderr, "pe: no Disc 2 image (looked for %s)\n", name);
+        fprintf(stderr, "pe: no Disc 2 next to Disc 1 (looked for %s)\n", name);
     }
+}
+
+/* Disc 2 from another place (settings.ini disc2=, or picked in a window)
+ * when open_disc2 did not find it. */
+int pe_host_disc_open_disc2(const char *path) {
+    if (open_image(&g_disc[1], path, 0) != 0) {
+        return -1;
+    }
+    fprintf(stderr, "pe: Disc 2: %s\n", path);
+    return 0;
 }
 
 int pe_host_disc_open(const char *path) {
