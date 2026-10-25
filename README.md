@@ -1,5 +1,7 @@
-# Native port for Parasite Eve PC *WORK IN PROGRESS* 
-still need disc 2 tested and implemented into the build
+# Native port for Parasite Eve PC *playable* 
+disc 2 has been tested and you can now play the full game to the end with end game content. no need to build just download and point to your disc files.
+for the features added look at controls.
+Soft Borders still need work and are currently broken but HD mode with widescreen works.
 
 ## What you need
 
