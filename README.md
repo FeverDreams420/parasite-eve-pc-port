@@ -1,4 +1,5 @@
-# Native port for Parasite Eve PC
+# Native port for Parasite Eve PC *WORK IN PROGRESS* 
+still need disc 2 tested and implemented into the build
 
 ## Controls
 
