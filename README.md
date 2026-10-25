@@ -7,8 +7,10 @@ still need disc 2 tested and implemented into the build
   game is included or downloaded.
 - Windows 10 or 11 with **WSL**: in PowerShell as administrator run
   `wsl --install`, restart, then open Ubuntu once to create your user.
-- [Git for Windows](https://git-scm.com/download/win)
-- [Python 3](https://www.python.org/downloads/windows/) (3.8 or newer)
+- [Git for Windows](https://git-scm.com/download/win) and
+  [Python 3](https://www.python.org/downloads/windows/) (3.8 or newer).
+  If either is missing, `build-windows.bat` offers to install it for you
+  with winget.
 
 On Linux you need none of the Windows items; see
 [Linux or WSL](#linux-or-wsl-ubuntu-2404) below.

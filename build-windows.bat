@@ -2,8 +2,9 @@
 rem Builds parasite-eve.exe on Windows through WSL (Ubuntu).
 rem Double-click it, or drop your Disc 1 .cue onto it. The exe is written
 rem next to this file. Needs WSL with Ubuntu ("wsl --install" once), and Git
-rem and Python on Windows: downloads are made on Windows into the downloads
-rem folder next to this file, as WSL networking can be much slower.
+rem and Python on Windows (offered for install with winget if missing):
+rem downloads are made on Windows into the downloads folder next to this
+rem file, as WSL networking can be much slower.
 rem Set PE_WSL_DISTRO to use a distro other than the default one.
 rem Paths are only echoed in quotes: folder names may contain & or ( ).
 setlocal
@@ -19,28 +20,35 @@ where wsl >nul 2>nul || (
     echo restart Windows, open Ubuntu once to create your user, then run this again.
     pause & exit /b 1
 )
-%WSL% -e true >nul 2>nul || (
+%WSL% -e true <nul >nul 2>nul || (
     echo WSL has no Linux distribution yet. Open PowerShell as administrator, run
     echo   wsl --install -d Ubuntu
     echo then open Ubuntu once to create your user, and run this again.
     pause & exit /b 1
 )
-where git >nul 2>nul || (
-    echo Git for Windows is needed for the downloads. Install it from
-    echo   https://git-scm.com/download/win
-    echo then run this again.
-    pause & exit /b 1
-)
-rem "python" can be the Microsoft Store placeholder, so check it really runs.
-set "PY="
-python -c "import sys, pip; sys.exit(sys.version_info < (3, 8))" >nul 2>nul && set "PY=python"
-if not defined PY py -3 -c "import sys, pip; sys.exit(sys.version_info < (3, 8))" >nul 2>nul && set "PY=py -3"
-if not defined PY (
-    echo Python 3.8 or newer is needed for the downloads. Install it from
-    echo   https://www.python.org/downloads/windows/
-    echo then run this again.
-    pause & exit /b 1
-)
+rem Git and Python make the downloads. A missing one is offered for install
+rem with winget, Windows' package manager.
+call :find_git
+if defined HAVE_GIT goto git_ok
+set "WINGET_EXTRA="
+call :install Git Git.Git && call :find_git
+if defined HAVE_GIT goto git_ok
+echo Git for Windows is needed for the downloads. Install it from
+echo   https://git-scm.com/download/win
+echo then run this again.
+pause & exit /b 1
+:git_ok
+call :find_python
+if defined PY goto python_ok
+rem Per-user install (no administrator), added to PATH.
+set WINGET_EXTRA=--override "/quiet InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_pip=1"
+call :install Python Python.Python.3.12 && call :find_python
+if defined PY goto python_ok
+echo Python 3.8 or newer is needed for the downloads. Install it from
+echo   https://www.python.org/downloads/windows/
+echo then run this again.
+pause & exit /b 1
+:python_ok
 
 set "DISC=%~1"
 if "%DISC%"=="" set /p "DISC=Path to your Parasite Eve Disc 1 .cue (you can drag the file here): "
@@ -82,3 +90,40 @@ echo.
 echo Done: "%HERE%\parasite-eve.exe"
 echo Put it in a folder with your Disc 1 .cue/.bin, or set disc= in settings.ini.
 pause
+exit /b 0
+
+:find_git
+set "HAVE_GIT="
+where git >nul 2>nul && set "HAVE_GIT=1"
+if defined HAVE_GIT exit /b 0
+if not exist "%ProgramFiles%\Git\cmd\git.exe" exit /b 0
+set "PATH=%ProgramFiles%\Git\cmd;%PATH%"
+set "HAVE_GIT=1"
+exit /b 0
+
+:find_python
+rem "python" can be the Microsoft Store placeholder, so check it really runs.
+set "PYCHECK=import sys, pip; sys.exit(sys.version_info < (3, 8))"
+set "PY="
+python -c "%PYCHECK%" >nul 2>nul && set "PY=python"
+if not defined PY py -3 -c "%PYCHECK%" >nul 2>nul && set "PY=py -3"
+if defined PY exit /b 0
+rem Just installed and not on this window's PATH yet: the usual folders.
+for /d %%d in ("%LOCALAPPDATA%\Programs\Python\Python3*" "%ProgramFiles%\Python3*") do (
+    "%%~d\python.exe" -c "%PYCHECK%" >nul 2>nul && set PY="%%~d\python.exe"
+)
+exit /b 0
+
+rem :install <name> <winget id>, with WINGET_EXTRA added to the winget call.
+rem Fails if winget is missing or the user says no.
+:install
+where winget >nul 2>nul || exit /b 1
+echo.
+echo %~1 is needed for the downloads and is not installed.
+set "ANSWER="
+set /p "ANSWER=Install %~1 now with winget? [Y/N] "
+if /i not "%ANSWER:~0,1%"=="Y" exit /b 1
+winget install --id %~2 -e --source winget --accept-package-agreements --accept-source-agreements %WINGET_EXTRA%
+rem Take the PATH the installer saved, as this window still has the old one.
+for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`) do set "PATH=%%p;%PATH%"
+exit /b 0
