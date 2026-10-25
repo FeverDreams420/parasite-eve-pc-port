@@ -10,6 +10,8 @@ whenever you want. Nothing is emulated: it is a fully native x86 program.
 ## Features added
 
 - Widescreen support and 8x foreground models.
+- PGXP (precise geometry) in HD: 3D models are drawn at their exact
+  positions, so they no longer wobble.
 - Save option in the Triangle menu during normal play (you can't save in
   battles).
 - Switch back to the original graphics at any time with F7, or with the new
