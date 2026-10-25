@@ -107,7 +107,11 @@ step "PS1 compilers (old-gcc 2.7.2 / 2.8.1, maspsx)"
 setup_compiler() {
     if [ -n "${PE_DOWNLOADS:-}" ]; then
         local local_script="tools/scripts/.$1.local.sh"
-        sed "s#^REL=.*#REL=\"file://${PE_DOWNLOADS// /%20}/files\"#" "tools/scripts/$1.sh" > "$local_script"
+        # Percent-encoded (curl decodes file:// paths): sed would read a & or
+        # # in the folder name (C:\Users\A&B\...) as its own.
+        local url="file://$PE_DOWNLOADS/files"
+        url=${url//\%/%25}; url=${url// /%20}; url=${url//\&/%26}; url=${url//\#/%23}
+        sed "s#^REL=.*#REL=\"$url\"#" "tools/scripts/$1.sh" > "$local_script"
         bash "$local_script"
         rm -f "$local_script"
     else
