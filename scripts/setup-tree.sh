@@ -20,13 +20,40 @@ if [ -e "$DEST" ]; then
     exit 1
 fi
 
-git clone "$DECOMP_URL" "$DEST"
+# Only the pinned commits, without history: a much smaller download than a
+# full clone. Network steps are retried, as large GitHub fetches can drop.
+retry() {
+    local n
+    for n in 1 2 3; do
+        "$@" && return 0
+        echo "(attempt $n failed, retrying)" >&2
+        sleep 5
+    done
+    return 1
+}
+# HTTP/1.1: long HTTP/2 transfers from GitHub can break off ("curl 92").
+git() { command git -c http.version=HTTP/1.1 "$@"; }
+# fetch_commit <dir> <url> <commit>: one commit, no history.
+fetch_commit() {
+    git init -q "$1"
+    git -C "$1" remote add origin "$2" 2>/dev/null || true
+    retry git -C "$1" fetch --depth 1 origin "$3"
+    git -C "$1" checkout -q FETCH_HEAD
+}
+fetch_commit "$DEST" "$DECOMP_URL" "$DECOMP_COMMIT"
 DEST=$(cd "$DEST" && pwd)
 cd "$DEST"
-git checkout -q -b native "$DECOMP_COMMIT"
-# Only the submodules the PC build uses (PsyZ and its SDL3).
-git submodule update --init third_party/psyz
-git -C third_party/psyz submodule update --init external/SDL
+git checkout -q -b native
+# Only the submodules the PC build uses (PsyZ and its SDL3), each at the
+# commit its parent pins.
+gitlink() { git -C "$1" ls-tree HEAD "$2" | awk '{ print $3 }'; }
+git submodule init third_party/psyz
+fetch_commit third_party/psyz "$(git config submodule.third_party/psyz.url)" \
+    "$(gitlink . third_party/psyz)"
+git -C third_party/psyz submodule init external/SDL
+fetch_commit third_party/psyz/external/SDL \
+    "$(git -C third_party/psyz config submodule.external/SDL.url)" \
+    "$(gitlink third_party/psyz external/SDL)"
 
 mkdir -p pc tools/pc
 cp -R "$HERE/pc/." pc/

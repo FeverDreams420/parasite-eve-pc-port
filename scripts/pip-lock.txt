@@ -1,0 +1,37 @@
+# Python packages for the decomp's requirements.txt (plus pycdlib), with
+# every dependency pinned, and the build backends of the source-only ones.
+# scripts/fetch-windows.py downloads exactly these for the WSL build; asm-differ
+# comes from git and is not listed.
+certifi==2026.10.23
+charset-normalizer==3.5.2
+colorama==0.4.6
+crunch64==0.6.2
+cxxfilt==0.3.0
+decomp_settings==0.0.10
+idna==3.20
+intervaltree==3.1.0
+Levenshtein==0.27.5
+mapfile_parser==2.13.2
+n64img==0.3.3
+ninja==1.13.2
+ninja_syntax==1.7.2
+pycdlib==1.22.0
+pycparser==3.12
+pyelftools==0.33
+pygfxd==1.0.5
+pylibyaml==0.1.0
+pypng==0.20220715.0
+python-Levenshtein==0.27.5
+PyYAML==6.0.3
+rabbitizer==1.16.2
+RapidFuzz==3.14.6
+requests==2.34.2
+sortedcontainers==2.4.0
+spimdisasm==1.42.4
+splat64==0.50.0
+tqdm==4.67.1
+urllib3==2.8.0
+watchdog==6.0.0
+poetry-core==2.5.0
+setuptools==84.2.1
+wheel==0.48.0

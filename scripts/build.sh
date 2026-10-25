@@ -5,6 +5,8 @@
 #   PE_TARGET=win32 (default) builds parasite-eve.exe for Windows,
 #   PE_TARGET=linux the 32-bit Linux binary, PE_TARGET=both builds both.
 #   PE_JOBS=N sets the number of parallel jobs (default: all cores).
+#   PE_DOWNLOADS=<folder> takes the source code, compilers and Python packages
+#   from a cache made by scripts/fetch-windows.py instead of the internet.
 #
 # Steps: source tree (scripts/setup-tree.sh), Python venv, MIPS tools, the
 # decomp's PS1 build, function tables, overlays, PsyZ, host build and link.
@@ -53,9 +55,30 @@ esac
 python3 -c 'import venv, ensurepip' 2>/dev/null || missing="$missing python3-venv"
 [ -z "$missing" ] || die "missing:$missing (see the package list at the top of $0)"
 
+PIP_SOURCE=()
+if [ -n "${PE_DOWNLOADS:-}" ]; then
+    [ -f "$PE_DOWNLOADS/git-urls.txt" ] || die "$PE_DOWNLOADS/git-urls.txt missing (run scripts/fetch-windows.py)"
+    # Every git download (also pip's) comes from the cached repositories.
+    n=0
+    while read -r url name; do
+        # file://, not a plain path: pip's clone uses --filter, which a
+        # plain local path ignores.
+        export "GIT_CONFIG_KEY_$n=url.file://$PE_DOWNLOADS/git/$name.git.insteadOf" "GIT_CONFIG_VALUE_$n=$url"
+        n=$((n + 1))
+    done < "$PE_DOWNLOADS/git-urls.txt"
+    # The cache is on the Windows drive, owned by another user as git sees it.
+    export "GIT_CONFIG_KEY_$n=safe.directory" "GIT_CONFIG_VALUE_$n=*"
+    export GIT_CONFIG_COUNT=$((n + 1))
+    PIP_SOURCE=(--no-index --find-links "$PE_DOWNLOADS/pip")
+fi
+
 if [ ! -d "$WORK" ]; then
     step "Source tree"
-    "$HERE/scripts/setup-tree.sh" "$WORK"
+    # Built aside and moved in when complete, so an interrupted download
+    # does not leave a half tree that the next run would take as done.
+    rm -rf "$WORK.part"
+    "$HERE/scripts/setup-tree.sh" "$WORK.part"
+    mv "$WORK.part" "$WORK"
 fi
 cd "$WORK"
 WORK=$(pwd)
@@ -66,7 +89,7 @@ step "Python venv"
 if [ ! -x .venv/bin/python ]; then
     python3 -m venv .venv
 fi
-.venv/bin/pip install -q -r requirements.txt pycdlib > "$LOGS/pip.log" 2>&1 \
+.venv/bin/pip install -q "${PIP_SOURCE[@]}" -r requirements.txt pycdlib > "$LOGS/pip.log" 2>&1 \
     || { tail -20 "$LOGS/pip.log"; die "pip failed, see $LOGS/pip.log"; }
 
 # The decomp calls the MIPS tools mipsel-none-elf-*; Ubuntu ships them as
@@ -79,8 +102,20 @@ export PATH="$WORK/.toolbin:$WORK/.venv/bin:$PATH"
 export PE_CPP="$WORK/tools/old-gcc/cpp"
 
 step "PS1 compilers (old-gcc 2.7.2 / 2.8.1, maspsx)"
-[ -x tools/old-gcc/cc1 ] && [ -x tools/old-gcc/cpp ] || bash tools/scripts/setup_stock_cc1.sh
-[ -x tools/old-gcc-281/cc1 ] || bash tools/scripts/setup_stock_cc281.sh
+# setup_compiler <script>: with PE_DOWNLOADS, the script runs with its
+# release URL pointed at the cached copy.
+setup_compiler() {
+    if [ -n "${PE_DOWNLOADS:-}" ]; then
+        local local_script="tools/scripts/.$1.local.sh"
+        sed "s#^REL=.*#REL=\"file://${PE_DOWNLOADS// /%20}/files\"#" "tools/scripts/$1.sh" > "$local_script"
+        bash "$local_script"
+        rm -f "$local_script"
+    else
+        bash "tools/scripts/$1.sh"
+    fi
+}
+[ -x tools/old-gcc/cc1 ] && [ -x tools/old-gcc/cpp ] || setup_compiler setup_stock_cc1
+[ -x tools/old-gcc-281/cc1 ] || setup_compiler setup_stock_cc281
 [ -f tools/maspsx/maspsx.py ] || bash tools/scripts/setup_maspsx.sh
 
 step "Files from Disc 1"

@@ -9,3 +9,5 @@ build/
 *.ppm
 SLUS_*
 main.exe
+downloads/
+/parasite-eve.exe

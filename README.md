@@ -1,6 +1,18 @@
 # Native port for Parasite Eve PC *WORK IN PROGRESS* 
 still need disc 2 tested and implemented into the build
 
+## What you need first
+
+- Your own Parasite Eve **Disc 1** image (`.cue` + `.bin`). Nothing from the
+  game is included or downloaded.
+- Windows 10 or 11 with **WSL**: in PowerShell as administrator run
+  `wsl --install`, restart, then open Ubuntu once to create your user.
+- [Git for Windows](https://git-scm.com/download/win)
+- [Python 3](https://www.python.org/downloads/windows/) (3.8 or newer)
+
+On Linux you need none of the Windows items; see
+[Linux or WSL](#linux-or-wsl-ubuntu-2404) below.
+
 ## Controls
 
 | PS1 | Key | PS1 | Key |
@@ -24,7 +36,24 @@ Xbox-style controllers work.
 
 ## Building
 
-Linux or WSL (Ubuntu 24.04). You need your own Disc 1 image (`.cue`/`.bin`).
+### Windows
+
+1. Install everything under [What you need first](#what-you-need-first).
+2. Download this repository (`git clone` or Code > Download ZIP) and unzip it.
+3. Drop your Disc 1 `.cue` onto `build-windows.bat` (or double-click it and
+   paste the path).
+4. When it says `Done`, put `parasite-eve.exe` in a folder with your Disc 1
+   `.cue`/`.bin` (or set `disc=` in `settings.ini`) and double-click it.
+
+It downloads the source code, compilers and packages on Windows into a
+`downloads` folder next to the `.bat` (WSL's own connection can be much
+slower), installs the Ubuntu packages it needs inside WSL, builds in your
+Ubuntu home folder (`~/parasite-eve-build`) and writes `parasite-eve.exe` next
+to the `.bat`. The first build takes a while; running it again continues or
+updates. Ubuntu's package lists are still downloaded inside WSL when packages
+are missing.
+
+### Linux or WSL (Ubuntu 24.04)
 
 ```sh
 sudo apt-get install git make curl python3-venv cmake ninja-build \
