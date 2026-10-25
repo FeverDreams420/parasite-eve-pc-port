@@ -1,7 +1,12 @@
 # Native port for Parasite Eve PC *playable* 
 disc 2 has been tested and you can now play the full game to the end with end game content. no need to build just download and point to your disc files.
-for the features added look at controls.
-Soft Borders still need work and are currently broken but HD mode with widescreen works.
+this port has an added HD option but you can switch back to the Original anytime you want. Nothing is emulated. Fully Native x86 program.
+
+##Features Added
+
+-Widescreen support, 8x foreground models.
+-Save option in the triangle menu during normal play (cant save in battles)
+-Turn back to normal graphics anytime you want by pressing F7 or the added graphical option in the User Preference Triangle menu.
 
 ## What you need
 
